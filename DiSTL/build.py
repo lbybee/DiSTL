@@ -1,10 +1,180 @@
+"""
+Includes the code necessary to build a document term data-frame (DTDF).
+There are two primary components here:
+
+1. make_DTDF
+
+make_DTDF is a function which takes some document source, as well
+as an instance of DTDFBuilder to assemble the necessary files for
+a DTDF.  Currently it supports the following sources:
+
+    1.a Mongodb aggregation generator
+    1.b csv files
+
+2. DTDFBuilder
+
+DTDFBuilder is a class containing all the information required to
+clean a DTDF from source files, as well as the methods needed to
+build/clean the DTDF.  These methods will be called within make_DTDF.
+"""
 import dask.dataframe as dd
 import dask.bag as db
 import pandas as pd
 import numpy as np
 import glob
+import json
 import os
 import re
+
+
+# ----------------- #
+# 1. make_DTDF code #
+# ----------------- #
+
+
+def _gen_docs_csv(file_pattern, text_column="text"):
+    """
+    a generator for producing doc_groups from a series (or single)
+    raw CSV file
+
+    Parameters
+    ----------
+    file_pattern : str
+        a globable file pattern where each file name can be passed
+        to pandas.read_csv
+    text_column : str
+        the column in the resulting pandas DataFrame which corresponds
+        to the text, all other columns are considered index
+
+    Yields
+    ------
+    DataFrame.iter_rows()
+    """
+
+    files = glob.glob(file_pattern)
+    for f in files:
+        df = pd.read_csv(f)
+        text = df[text_column].tolist()
+        df = df.drop(text_column, axis=1)
+        yield df, text
+
+
+def _gen_docs_mongodb(config):
+
+    if os.path.isfile(config):
+        with open(config, "r") as ifile:
+            config = json.load(ifile)
+    elif type(config) is dict:
+        config = config
+    else:
+        raise ValueError("Unsupported config type")
+
+    db = config["db"]
+    collections = config["collections"]
+    pipeline = config["pipeline"]
+
+    client = MongoClient()
+    client.admin.command({"setParameter": 1,
+                          "cursorTimeoutMillis": 60000000})
+    for col in collections:
+        yield client[db][col].aggregate(pipeline, allowDiskUse=True)
+
+
+def make_DTDF(source, DTDF_dir, inp_DTDFBuilder=None, source_type="csv",
+              doc_type=None, gen_kwds=None, vocab_kwds=None,
+              DTDF_kwds=None):
+    """
+    wrapper for making DTDF.
+
+    Parameters
+    ----------
+    source : multiple
+        argument passed to _gen_docs_<source_type>, dependings on
+        source_type.
+        location where source files are stored
+    DTDF_dir : str
+        location where DTDF files should be stored
+    inp_DTDFBuilder : multiple
+        Supported types are:
+
+            1. DTDTBuilder instance
+            2. dict-like
+                In this case DTDFBuilder instance is created
+            3. None
+                In this case generic DTDFBuilder instance is created
+
+    source_type : str
+        type of source used, currently supports:
+
+            a. json config file containing mongodb aggregation pipeline
+               as well database and collection names
+            b. directory containing csv files
+
+    doc_type : str or None
+        what type is each element in the iterable?
+        Supported types:
+
+            - str
+            - list
+            - dict
+
+    gen_kwds : dict-like or None
+        additional kwds to pass to _gen_DTDF_<source_type>
+    vocab_kwds : dict-like or None
+        kwds passed to build_vocab
+    DTDF_kwds : dict-like or None
+        kwds passed to build_DTDF
+
+    Returns
+    -------
+    None, stores files in DTDF_dir
+    """
+
+    # TODO support missing vocab_dict
+    # TODO support json inp_DTDFBuilder
+
+    # update any kwds
+    if gen_kwds is None:
+        gen_kwds = {}
+    if vocab_kwds is None:
+        vocab_kwds = {}
+    if DTDF_kwds is None:
+        DTDF_kwds = {}
+    if doc_type is not None:
+        vocab_kwds["doc_type"] = doc_type
+        DTDF_kwds["doc_type"] = doc_type
+
+    # initialize DTDFBuilder
+    if inp_DTDFBuilder is None:
+        inp_DTDFBuilder = {}
+    if type(inp_DTDFBuilder) is dict:
+        inst_DTDFBuilder = DTDFBuilder(**inp_DTDFBuilder)
+    elif type(inp_DTDFBuilder) is DTDFBuilder:
+        inst_DTDFBuilder = inp_DTDFBuilder
+    else:
+        raise ValueError("Unsupported type for inp_DTDFBuilder")
+
+    # get document generator
+    if source_type == "csv":
+        doc_group_gen = _gen_docs_csv(source, **gen_kwds)
+    elif source_type == "mongodb":
+        doc_group_gen = _gen_docs_mongodb(source, **gen_kwds)
+    else:
+        raise ValueError("Unsupported source_type %s" % source_type)
+
+    # build vocab
+    inst_DTDFBuilder.build_vocab(doc_group_gen, DTDF_dir, **vocab_kwds)
+    inst_DTDFBuilder.clean_vocab(DTDF_dir)
+
+    # build DTDF
+    inst_DTDFBuilder.build_DTDF(doc_group_gen, DTDF_dir, **DTDF_kwds)
+    inst_DTDFBuilder.clean_DTDF(DTDF_dir)
+
+
+# ------------------- #
+# 2. DTDFBuilder code #
+# ------------------- #
+
 
 regex = re.compile(r"(?u)\b\w\w\w+\b")
 
@@ -174,10 +344,10 @@ def _token_vocab_map(doc, vocab_dict):
     return n_doc
 
 
-class DTMDFBuilder(object):
+class DTDFBuilder(object):
     """
-    class for building DTMDF contains all the cleaning related
-    information.  An instance of DTMDFBuilder can be used
+    class for building DTDF contains all the cleaning related
+    information.  An instance of DTDFBuilder can be used
     to clean multiple different document streams.
 
     Parameters
@@ -218,9 +388,9 @@ class DTMDFBuilder(object):
         # TODO Logging
         # TODO Missing vocab_dict
         # TODO Compression for data files
-        # TODO post DTMDF cleaning (thresholding/agg_group)
+        # TODO post DTDF cleaning (thresholding/agg_group)
 
-        self.str_parser = _default_parser
+        self.str_parser = str_parser
         self.n_grams = n_grams
         self.mult_grams = mult_grams
         self.stop_words = stop_words
@@ -234,26 +404,32 @@ class DTMDFBuilder(object):
         self.post_tfidf_thresh=post_tfidf_thresh
 
 
-    def build_base_DTMDF(self, documents, data_dir, doc_type="str", mnum=0):
+    def build_base_DTDF(self, doc_group, data_dir, doc_type="str", mnum=0):
         """
         builds sparse document term matrix from documents.
-        Is wrapped by DTMDF_builder to handle possible parallel
+        Is wrapped by build_DTDF to handle possible parallel
         computing.
 
         Parameters
         ----------
-        documents : iterable
-            an iterable of tuples, where the first is any
-            index info and the second is the text of the document
+        doc_group : iterable or tuple
+            doc_group either corresponds to an iterable of tuples
+            or a tuple of iterables.  The two possibilities
+            correspond to different data sources
 
-            (index, doc)
+            1. iterable of tuples
+                The index must be assembled along with the documents
+                e.g. pulling elements from a database
+            2. tuple of iterables
+                the index is already assembled
+                e.g. load data out of a csv
 
-            index should be a dict-like
-
+            In either case, the first element of the tuple corresponds
+            to the index and the second the documents
         data_dir : str
-            location where DTMDF files should be stored
+            location where DTDF files should be stored
         doc_type : str
-            what type is each element in the iterable?
+            what type is each element in the iterable (doc_group)?
             Supported types:
 
                 - str
@@ -282,7 +458,6 @@ class DTMDFBuilder(object):
         if doc_type == "str":
 
             def doc_builder(doc, vocab_dict):
-
                 doc = self.str_parser(doc)
                 return _tokenizer(doc, vocab_dict, self.n_grams,
                                   self.mult_grams)
@@ -290,128 +465,127 @@ class DTMDFBuilder(object):
         elif doc_type == "list":
 
             def doc_builder(doc, vocab_dict):
-
                 return _tokenizer(doc, vocab_dict, self.n_grams,
                                   self.mult_grams)
 
         elif doc_type == "dict":
 
             def doc_builder(doc, vocab_dict):
-
                 return _token_vocab_map(doc, vocab_dict)
 
         else:
 
             raise ValueError("Unsupported doc_type %s" % doc_type)
 
-        i = 0
-        doc_id = []
-        term = []
-        count = []
-        index_l = []
-        for index, doc in documents:
-            doc = doc_builder(doc, vocab_dict)
-            t_term = doc.keys()
-            doc_id.extend([i] * len(t_term))
-            term.extend(t_term)
-            count.extend(doc.values())
-            index["doc_id"] = i
-            index_l.append(index)
-            i += 1
+        # account for different possible doc_groups
+        if type(doc_group) is tuple:
+            i = 0
+            doc_id = []
+            term = []
+            count = []
+            for doc in doc_group[1]:
+                doc = doc_builder(doc, vocab_dict)
+                t_term = doc.keys()
+                doc_id.extend([i] * len(t_term))
+                term.extend(t_term)
+                count.extend(doc.values())
+                i += 1
 
-        # build index
-        index_df = pd.DataFrame(index_l)
+            index_df = doc_group[0]
+            index_df["doc_id"] = range(i)
+
+        else:
+            i = 0
+            doc_id = []
+            term = []
+            count = []
+            index_l = []
+            for index, doc in doc_group:
+                doc = doc_builder(doc, vocab_dict)
+                t_term = doc.keys()
+                doc_id.extend([i] * len(t_term))
+                term.extend(t_term)
+                count.extend(doc.values())
+                index["doc_id"] = i
+                index_l.append(index)
+                i += 1
+
+            # build index
+            index_df = pd.DataFrame(index_l)
+
         f_name = os.path.join(data_dir, "tmp_doc_id_%s.csv" % mnum)
         index_df.to_csv(f_name, index=False)
 
-        # build sparse DTMDF
+        # build sparse DTDF
         dtm_df = pd.DataFrame({"doc_id": doc_id, "term": term, "count": count})
-        f_name = os.path.join(data_dir, "tmp_DTMDF_%d.csv" % mnum)
+        f_name = os.path.join(data_dir, "tmp_DTDF_%d.csv" % mnum)
         dtm_df.to_csv(f_name, index=False)
 
 
-    def build_DTMDF(self, documents, data_dir, doc_type="str", distributed=0):
+    def build_DTDF(self, doc_group_gen, data_dir, doc_type="str"):
         """
-        builds a temporary version of the DTMDF for cleaning and
-        prior thresholding purposes.  This can handle documents
-        which correspond to dask delayed objects for parallel
-        computing.
+        builds a temporary version of the DTDF for cleaning and
+        prior thresholding purposes.
 
         Parameters
         ----------
-        documents : iterable
-            if distributed is true, this should be an iterable of
-            iterables, where each internal iterable can be passed to
-            base_vocab_builder.
+        doc_group_gen : generator
+            A generate where each element corresponds to a doc_group. This
+            is used to handle the distributed computing: in cases where
+            doc_group_gen yields more than one element, the computation
+            of each element is done in a distributed fashion.
         data_dir : str
-            location where DTMDF files should be stored
+            location where DTDF files should be stored
         doc_type : str
-            what type is each element in the iterable?
+            what type is each text document in doc_group?
             Supported types:
 
                 - str
                 - list
                 - dict
 
-        distributed : scalar or bool
-            indicator for whether documents are distributed
-
         Returns
         -------
-        None, resulting pandas DataFrame is stored to data_dir, if
-        distributed a series of DataFrames are written
+        None, resulting data is stored in data_dir
         """
 
-        if distributed:
+        def wrapper(tup):
+           i, doc_group = tup
+           self.build_base_DTDF(doc_group, data_dir, doc_type, i)
 
-            def distgen(documents):
-
-                for i, doc in enumerate(documents):
-                    yield i, doc
-
-
-            def wrapper(tup):
-
-                i, doc = tup
-                return self.build_base_DTMDF(doc, data_dir, doc_type, i)
+        bag = db.from_sequence(doc_group_gen).map(wrapper)
+        bag.compute()
 
 
-            bag = db.from_sequence(distgen).map(wrapper)
-            bag.compute()
-
-        else:
-            self.build_base_DTMDF(documents, doc_type)
-
-
-    def clean_DTMDF(self, data_dir):
+    def clean_DTDF(self, data_dir):
         """
-        cleans DTMDF and produces final files that can be used
-        by DTMDF class
+        cleans DTDF and produces final files that can be used
+        by DTDF class
 
         Parameters
         ----------
         data_dir : str
-            location where DTMDF files should be stored.  In order
-            for this script to do anything, build_DTMDF should
+            location where DTDF files should be stored.  In order
+            for this script to do anything, build_DTDF should
             already have been run on data_dir.
 
         Returns
         -------
-        None, stores a sparse representation of the DTMDF
+        None, stores a sparse representation of the DTDF
         (triplet counts, doc ids and term ids)
         """
 
         tmp_doc_files = os.path.join(data_dir, "tmp_doc_id_*.csv")
         doc_df = dd.read_csv(tmp_doc_files)
 
-        tmp_dtm_files = os.path.join(data_dir, "tmp_DTMDF_*.csv")
+        tmp_dtm_files = os.path.join(data_dir, "tmp_DTDF_*.csv")
         dtm_df = dd.read_csv(tmp_dtm_files)
 
         # build term id
         term_id = pd.DataFrame(tmp_dtm_df["term"].unique().compute())
         term_id["term_id"] = term_id.index
 
-        # map term -> term_id in sparse DTMDF
+        # map term -> term_id in sparse DTDF
         term_id_map = term_id.copy()
         term_id_map.index = term_id["term"]
         term_id_map = term_id_map["term_id"]
@@ -431,7 +605,7 @@ class DTMDFBuilder(object):
         doc_id = doc_df.compute()
         doc_id.to_csv(os.path.join(data_dir, "doc_id.csv"), index=False)
 
-        dtm_df.to_csv(os.path.join(data_dir, "DTMDF_*.csv"), index=False)
+        dtm_df.to_csv(os.path.join(data_dir, "DTDF_*.csv"), index=False)
 
         term_id.to_csv(os.path.join(data_dir, "term_id.csv"), index=False)
 
@@ -444,8 +618,7 @@ class DTMDFBuilder(object):
             os.remove(f)
 
 
-    def build_base_vocab(self, documents, data_dir, doc_type="str",
-                         mnum=0):
+    def build_base_vocab(self, doc_group, data_dir, doc_type="str", mnum=0):
         """
         builds an aggregate version of the vocab for cleaning
         and prior thresholding purposes.  Is wrapped by
@@ -453,13 +626,24 @@ class DTMDFBuilder(object):
 
         Parameters
         ----------
-        documents : iterable
-            an iterable of tuples, where the first is any
-            index info and the second is the text of the document
+        doc_group : iterable or tuple
+            doc_group either corresponds to an iterable of tuples
+            or a tuple of iterables.  The two possibilities
+            correspond to different data sources
+
+            1. iterable of tuples
+                The index must be assembled along with the documents
+                e.g. pulling elements from a database
+            2. tuple of iterables
+                the index is already assembled
+                e.g. load data out of a csv
+
+            In either case, the first element of the tuple corresponds
+            to the index and the second the documents
         data_dir : str
-            location where DTMDF files should be stored
+            location where DTDF files should be stored
         doc_type : str
-            what type is each element in the iterable?
+            what type is each element in the iterable (doc_group)?
             Supported types:
 
                 - str
@@ -479,20 +663,17 @@ class DTMDFBuilder(object):
         if doc_type == "str":
 
             def doc_builder(doc, vocab_dict):
-
                 doc = self.str_parser(doc)
                 return _pre_tokenizer(doc)
 
         elif doc_type == "list":
 
             def doc_builder(doc, vocab_dict):
-
                 return _pre_tokenizer(doc)
 
         elif doc_type == "dict":
 
             def doc_builder(doc, vocab_dict):
-
                 return doc
 
         else:
@@ -506,15 +687,28 @@ class DTMDFBuilder(object):
         vocab = {}
         doc_count = 0
 
-        for index, doc in documents:
-            doc = doc_builder(doc, vocab_dict)
-            for k in doc:
-                if k not in vocab:
-                    vocab[k] = [1, 1]
-                else:
-                    vocab[k][0] += 1
-                    vocab[k][1] += doc[k]
-            doc_count += 1
+        # account for different possible doc_groups
+        if type(doc_group) is tuple:
+            for doc in doc_group[1]:
+                doc = doc_builder(doc, vocab_dict)
+                for k in doc:
+                    if k not in vocab:
+                        vocab[k] = [1, 1]
+                    else:
+                        vocab[k][0] += 1
+                        vocab[k][1] += doc[k]
+                doc_count += 1
+
+        else:
+            for index, doc in doc_group:
+                doc = doc_builder(doc, vocab_dict)
+                for k in doc:
+                    if k not in vocab:
+                        vocab[k] = [1, 1]
+                    else:
+                        vocab[k][0] += 1
+                        vocab[k][1] += doc[k]
+                doc_count += 1
 
         vocab = pd.DataFrame(vocab).T
         vocab.columns = ["doc_term_count", "term_count"]
@@ -525,57 +719,39 @@ class DTMDFBuilder(object):
         vocab.to_csv(f_name, index=False)
 
 
-    def build_vocab(self, documents, data_dir, doc_type="str", distributed=0):
+    def build_vocab(self, doc_group_gen, data_dir, doc_type="str"):
         """
         builds an aggregate version of the vocab for cleaning and
-        prior thresholding purposes.  This can handle documents
-        which correspond to dask delayed objects for parallel
-        computing.
+        prior thresholding purposes.
 
         Parameters
         ----------
-        documents : iterable
-            if distributed is true, this should be an iterable of
-            iterables, where each internal iterable can be passed to
-            base_vocab_builder.
+        doc_group_gen : generator
+            A generate where each element corresponds to a doc_group. This
+            is used to handle the distributed computing: in cases where
+            doc_group_gen yields more than one element, the computation
+            of each element is done in a distributed fashion.
         data_dir : str
-            location where DTMDF files should be stored
+            location where DTDF files should be stored
         doc_type : str
-            what type is each element in the iterable?
+            what type is each text document in doc_group?
             Supported types:
 
                 - str
                 - list
                 - dict
 
-        distributed : scalar or bool
-            indicator for whether documents are distributed
-
         Returns
         -------
-        None, resulting pandas DataFrame is stored to data_dir, if
-        distributed a series of DataFrames are written
+        None, resulting data is stored in data_dir
         """
 
-        if distributed:
+        def wrapper(tup):
+           i, doc_group = tup
+           self.build_base_vocab(doc_group, data_dir, doc_type, i)
 
-            def distgen(documents):
-
-                for i, doc in enumerate(documents):
-                    yield i, doc
-
-
-            def wrapper(tup):
-
-                i, doc = tup
-                return self.build_base_vocab(doc, data_dir, doc_type, i)
-
-
-            bag = db.from_sequence(distgen).map(wrapper)
-            bag.compute()
-
-        else:
-            self.build_base_vocab(documents, doc_type)
+        bag = db.from_sequence(doc_group_gen).map(wrapper)
+        bag.compute()
 
 
     def clean_vocab(self, data_dir):
@@ -586,7 +762,7 @@ class DTMDFBuilder(object):
         Parameters
         ----------
         data_dir : str
-            location where DTMDF files should be stored.  In order
+            location where DTDF files should be stored.  In order
             for this script to do anything, build_vocab should
             already have been run on data_dir.
 

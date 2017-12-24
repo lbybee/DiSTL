@@ -183,7 +183,8 @@ def test_wrapper(test_dir, **kwds):
             os.remove(os.path.join(new_dir, f))
 
 
-directories = [os.path.join("test_data", "T%d" % d) for d in range(1, 12)]
+#directories = [os.path.join("test_data", "T%d" % d) for d in range(1, 12)]
+directories = [os.path.join("test_data", "T%d" % d) for d in range(11, 12)]
 for d in directories:
     test_wrapper(d)
     print d, "done!"

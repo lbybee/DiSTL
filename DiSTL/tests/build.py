@@ -348,7 +348,7 @@ def _tokenizer(doc, vocab_dict, n_grams, mult_grams):
 
         # add multigrams if requested
         if mult_grams and n_grams > 1:
-            for k_grams in range(n_grams - 1):
+            for k_grams in range(1, n_grams):
                 for i in range(len(nt_doc) + 1 - k_grams):
                     term = " ".join(nt_doc[i:i+k_grams])
                     if term not in n_doc:
@@ -735,14 +735,25 @@ class DTDFBuilder(object):
         dtm_df = dtm_df[["doc_id", "term_id", "count"]]
 
         # get correct doc id
-        doc_id_map = doc_df.copy()
-        doc_id_map["t_doc_id"] = 1
-        doc_id_map["t_doc_id"] = doc_id_map["t_doc_id"].cumsum() - 1
-        doc_id_map = doc_id_map.compute()
-        doc_id_map.index = doc_id_map["doc_id"]
-        doc_id_map = doc_id_map["t_doc_id"]
-        dtm_df["doc_id"] = dtm_df["doc_id"].map(doc_id_map)
-        doc_df["doc_id"] = doc_df["doc_id"].map(doc_id_map)
+        doc_df["new_doc_id"] = 1
+        doc_df["new_doc_id"] = doc_df["new_doc_id"].cumsum() - 1
+
+        delayed_dtm_df = dtm_df.to_delayed()
+        delayed_doc_df = doc_df.to_delayed()
+
+        def zip_mapper(dtm_df_i, doc_df_i):
+
+            doc_df_i.index = doc_df_i["doc_id"]
+            id_dict = doc_df_i["new_doc_id"].to_dict()
+            dtm_df_i["doc_id"] =  dtm_df_i["doc_id"].map(id_dict)
+            return dtm_df_i
+
+        del_l = [delayed(zip_mapper)(dtm_df_i, doc_df_i)
+                 for dtm_df_i, doc_df_i in
+                 zip(delayed_dtm_df, delayed_doc_df)]
+        dtm_df = dd.from_delayed(del_l)
+        doc_df["doc_id"] = doc_df["new_doc_id"]
+        doc_df = doc_df.drop("new_doc_id", axis=1)
 
         # write results
         doc_id = doc_df.compute()
@@ -933,7 +944,7 @@ class DTDFBuilder(object):
             vocab = vocab[vocab["doc_term_count"] >= thresh]
         if self.pre_doc_uthresh < 1:
             thresh = D * self.pre_doc_uthresh
-            vocab = vocab[vocab["doc_term_count"] < thresh]
+            vocab = vocab[vocab["doc_term_count"] <= thresh]
 
         # tfidf thresholding
         if self.pre_tfidf_thresh > 0:

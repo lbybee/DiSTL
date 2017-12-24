@@ -32,7 +32,7 @@ import re
 # ----------------- #
 
 
-def _gen_docs_csv(file_pattern, text_column="text"):
+def _gen_docs_csv(file_pattern, text_column="text", **kwds):
     """
     a generator for producing doc_groups from a series (or single)
     raw CSV file
@@ -59,7 +59,38 @@ def _gen_docs_csv(file_pattern, text_column="text"):
         yield df, text
 
 
-def _gen_docs_mongodb(config):
+def _gen_docs_mongodb(config, doc_type="str", **kwds):
+    """
+    a generator for producing doc_groups from a mongodb
+    aggregation instance
+
+    Parameters
+    ----------
+    config : str or dict-like
+        if str we assume this is the file location and
+        load the json data.  If dict-like we assume
+        this is json data itself.
+    doc_type : str
+        type of documents, used to process generator
+
+    Yields
+    ------
+    tuples of index and documents
+    """
+
+    # define generator based on doc type
+    if doc_type == "str" or doc_type == "list":
+
+        def doc_gen(aggregator):
+            for doc in aggregator:
+                yield (doc["_id"], doc["txt"])
+
+    elif doc_type == "dict":
+
+        def doc_gen(aggregator):
+            for doc in aggregator:
+                t_dict = {t["term"]: t["count"] for t in doc["txt"]}
+                yield (doc["_id"], t_dict)
 
     if os.path.isfile(config):
         with open(config, "r") as ifile:
@@ -77,7 +108,9 @@ def _gen_docs_mongodb(config):
     client.admin.command({"setParameter": 1,
                           "cursorTimeoutMillis": 60000000})
     for col in collections:
-        yield client[db][col].aggregate(pipeline, allowDiskUse=True)
+
+        agg = client[db][col].aggregate(pipeline, allowDiskUse=True)
+        yield doc_gen(agg)
 
 
 def make_DTDF(source, DTDF_dir, inp_DTDFBuilder=None, source_type="csv",
@@ -143,6 +176,7 @@ def make_DTDF(source, DTDF_dir, inp_DTDFBuilder=None, source_type="csv",
     if doc_type is not None:
         vocab_kwds["doc_type"] = doc_type
         DTDF_kwds["doc_type"] = doc_type
+        gen_kwds["doc_type"] = doc_type
 
     # initialize DTDFBuilder
     if inp_DTDFBuilder is None:
@@ -344,6 +378,91 @@ def _token_vocab_map(doc, vocab_dict):
     return n_doc
 
 
+def _default_lemmatizer(unstemmed):
+    """takes a pandas data frame with just a term var and generates
+    stems (lemmas).  Note this is a sequential lemmatisation procedure
+
+    Params
+    ------
+    unstemmed : Pandas Data Frame
+
+    Returns
+    -------
+    Pandas series
+    """
+
+    def es0_stemmer(x):
+        if x[-4:] == "sses":
+            x = x[:-2]
+        return x
+
+    def es1_stemmer(x):
+        if x[-3:] == "ies":
+            x = x[:-3] + "y"
+        return x
+
+    def s_stemmer(x):
+
+        if x[-1] == "s" and x[-2:] != "ss":
+            x = x[:-1]
+        return x
+
+    def ly_stemmer(x):
+
+        if x[-2:] == "ly":
+            x = x[:-2]
+        return x
+
+    def ed0_stemmer(x):
+
+        if x[-2:] == "ed":
+            x = x[:-2]
+        return x
+
+    def ed1_stemmer(x):
+
+        if x[-2:] == "ed":
+            x = x[:-1]
+        return x
+
+    def ing0_stemmer(x):
+
+        if x[-3:] == "ing":
+            x = x[:-3] + "e"
+        return x
+
+    def ing1_stemmer(x):
+
+        if re.search("([^aeiouy])\\1ing$", x):
+            x = x[:-4]
+        return x
+
+    def ing2_stemmer(x):
+
+        if x[-3:] == "ing":
+            x = x[:-3]
+        return x
+
+    vocab = unstemmed.copy()
+    for stem in [es0_stemmer, es1_stemmer, s_stemmer, ly_stemmer, ed0_stemmer,
+                 ed1_stemmer, ing0_stemmer, ing1_stemmer, ing2_stemmer]:
+        stem_map = gen_stem_map(vocab["term"].drop_duplicates(), stem)
+        vocab["term"] = vocab["term"].map(stem_map)
+    return vocab["term"]
+
+
+def _gen_stem_map(vocab, stem):
+
+    stem_map = vocab.copy()
+    stem_map = stem_map.apply(stem)
+    ind = stem_map.duplicated(keep=False)
+    stem_map.loc[~ind] = vocab.loc[~ind]
+    stem_map.index = vocab
+    stem_map = stem_map.to_dict()
+
+    return stem_map
+
+
 class DTDFBuilder(object):
     """
     class for building DTDF contains all the cleaning related
@@ -389,12 +508,18 @@ class DTDFBuilder(object):
         # TODO Missing vocab_dict
         # TODO Compression for data files
         # TODO post DTDF cleaning (thresholding/agg_group)
+        # TODO clean stemmers
 
         self.str_parser = str_parser
         self.n_grams = n_grams
         self.mult_grams = mult_grams
         self.stop_words = stop_words
         self.regex_stop_words = regex_stop_words
+        if stemmer is not None:
+            if stemmer == "lemmatizer":
+                self.stemmer = _default_lemmatizer
+            else:
+                raise ValueError("Unsupported stemmer type")
         self.stemmer = stemmer
         self.pre_doc_lthresh=pre_doc_lthresh
         self.pre_doc_uthresh=pre_doc_uthresh

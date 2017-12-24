@@ -1,0 +1,12 @@
+{"config": {"db": "DJWSJ",
+            "collections": ["y2017"],
+            "pipeline": [{"$limit": 2500},
+                         {"$unwind": "$txt"},
+                         {"$addFields": {"day-date": {"$dateToString": {"format": "%Y-%m-%d", "date": "$display-date"}}}},
+                         {"$addFields": {"display-date": "$day-date"}},
+                         {"$group": {"_id": {"display-date": "$display-date"},
+                                     "txt": {"$push": "$txt"}}},
+                         {"$project": {"_id": 1, "txt": 1}}]},
+ "doc_type": "list",
+ "DTDFBuilder_kwds": {"stemmer": "lemmatizer", "n_grams": 2,
+                      "mult_grams": 1, "pre_term_length": 3}}

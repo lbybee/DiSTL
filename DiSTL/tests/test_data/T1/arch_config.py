@@ -1,16 +1,17 @@
 # parameters
 params = {"db": "DJWSJ",
           "model_name": "T1",
-          "project_dir": "/home/lbybee/Documents/repos/github/DiSTL/DiSTL/tests/T1",
+          "project_dir": "/home/lbybee/Documents/repos/github/DiSTL/DiSTL/tests/test_data/T1",
           "article_bottom_thresh": 0.0,
-          "article_top_thresh": 0.0,
+          "article_top_thresh": 1.0,
           "tfidf_thresh": 0.0,
           "stem": True}
 
 # pipeline for DTM aggregation
-dtm_pipeline = [{"$limit": 1000},
+dtm_pipeline = [{"$limit": 2500},
                 {"$unwind": "$txt"},
-                {"$group": {"_id": {"display-date": "$display-date",
+                 {"$addFields": {"day-date": {"$dateToString": {"format": "%Y-%m-%d", "date": "$display-date"}}}},
+                {"$group": {"_id": {"display-date": "$day-date",
                                     "txt": "$txt"},
                             "count": {"$sum": 1}}},
                 {"$addFields": {"display-date": "$_id.display-date"}},
@@ -19,9 +20,10 @@ dtm_pipeline = [{"$limit": 1000},
                                                 "count": "$count"}}}}]
 
 # pipeline for vocab mongodb aggregation
-vocab_doc_count_pipeline = [{"$limit": 1000},
+vocab_doc_count_pipeline = [{"$limit": 2500},
                             {"$unwind": "$txt"},
-                            {"$group": {"_id": {"display-date": "$display-date",
+                            {"$addFields": {"day-date": {"$dateToString": {"format": "%Y-%m-%d", "date": "$display-date"}}}},
+                            {"$group": {"_id": {"day-date": "$day-date",
                                                 "txt": "$txt"},
                                         "count": {"$sum": 1}}},
                              {"$group": {"_id": "$_id.txt",
@@ -36,7 +38,8 @@ def collection_gen():
 # count method
 def count_method(db, collection, client):
 
-    pipeline = [{"$limit": 1000},
-                {"$group": {"_id": "$display-date"}}]
+    pipeline = [{"$limit": 2500},
+                {"$addFields": {"day-date": {"$dateToString": {"format": "%Y-%m-%d", "date": "$display-date"}}}},
+                {"$group": {"_id": "$day-date"}}]
     iterator = client[db][collection].aggregate(pipeline, allowDiskUse=True)
     return len(list(iterator))

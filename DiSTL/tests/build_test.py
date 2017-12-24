@@ -3,35 +3,35 @@ test columns :
     1. unigrams
     2. bigrams
     3. multigrams
-    4. pre-threshold bottom art 0.01
+    4. pre-threshold bottom art 0.1
     5. pre-threshold top art 0.5
-    6. pre-threshold tfidf 1.
-    7. stop-words (the, a)
-    8. regex stop words (he)
-    9. parallel
-    10. list input
-    11. dict input
+    6. stop-words (the, a)
+    7. regex stop words (he)
+    8. parallel
+    9. list input
+    10. dict input
 
-    : 1 : 2 : 3 : 4 : 5 : 6 : 7 : 8 : 9 : 10 : 11 :
-T1  : X :   :   :   :   :   :   :   :   :    : X  :
-T2  : X :   :   :   :   :   :   :   :   : X  :    :
-T3  : X :   :   : X :   :   :   :   :   :    : X  :
-T4  : X :   :   :   : X :   :   :   :   :    : X  :
-T5  : X :   :   :   :   : X :   :   :   :    : X  :
-T6  : X :   :   :   :   :   : X :   :   :    : X  :
-T7  : X :   :   :   :   :   :   : X :   :    : X  :
-T8  : X :   :   :   :   :   :   :   : X :    : X  :
-T9  :   : X :   :   :   :   :   :   :   : X  :    :
-T10 :   : X :   : X :   :   :   :   :   : X  :    :
-T11 :   : X :   :   :   :   :   :   : X : X  :    :
-T12 :   :   : X :   :   :   :   :   :   : X  :    :
+    : 1 : 2 : 3 : 4 : 5 : 6 : 7 : 8 : 9 : 10 :
+T1  : X :   :   :   :   :   :   :   :   : X  :
+T2  : X :   :   :   :   :   :   :   : X :    :
+T3  : X :   :   : X :   :   :   :   :   : X  :
+T4  : X :   :   :   : X :   :   :   :   : X  :
+T5  : X :   :   :   :   : X :   :   :   : X  :
+T6  : X :   :   :   :   :   : X :   :   : X  :
+T7  : X :   :   :   :   :   :   : X :   : X  :
+T8  :   : X :   :   :   :   :   :   : X :    :
+T9  :   : X :   : X :   :   :   :   : X :    :
+T10 :   : X :   :   :   :   :   : X : X :    :
+T11 :   :   : X :   :   :   :   :   : X :    :
 """
-from numpy.testing import assert_equal, assert_, assert_allclose
-from DiSTL.build import make_DTDF
+from numpy.testing import assert_equal, assert_array_equal, assert_, assert_allclose
+from build import make_DTDF
+#from DiSTL.build import make_DTDF
 import dask.dataframe as dd
 import dask.bag as db
 import pandas as pd
 import numpy as np
+import json
 import os
 
 
@@ -52,7 +52,7 @@ def load_data(data_dir):
     doc_id = pd.read_csv(os.path.join(data_dir, "doc_id.csv"))
     files = os.listdir(data_dir)
     c_files = [f for f in files if "corpus" in f]
-    d_files = [f for f in files is "DTDF" in f]
+    d_files = [f for f in files if "DTDF" in f]
     if len(c_files) > 0:
         corpus = dd.read_csv(os.path.join(data_dir, "corpus_*.csv"),
                              header=None,
@@ -91,40 +91,57 @@ def test_df_comp(tup_old, tup_new):
     # compare term_ids
 
     # confirm same columns
-    assert_equal(term_id_new.columns, term_id_old.columns)
+    assert_array_equal(term_id_new.columns, term_id_old.columns)
 
     # confirm same terms
     term_id_new = term_id_new.sort_values("term")
     term_id_old = term_id_old.sort_values("term")
-    assert_equal(term_id_new["term"].values(), term_id_old["term"].values())
+    assert_array_equal(term_id_new["term"].values, term_id_old["term"].values)
 
 
     # compare doc_ids
 
     # confirm same columns
-    assert_equal(doc_id_new.columns, doc_id_old.columns)
+    assert_array_equal(doc_id_new.columns, doc_id_old.columns)
 
     # confirm same index
     doc_id_new = doc_id_new.sort_index()
     doc_id_old = doc_id_old.sort_index()
-    assert_equal(doc_id_new.index.values(), doc_id_old.index.values())
+    assert_array_equal(doc_id_new.index.values, doc_id_old.index.values)
 
 
     # compare counts
 
     # compare doc counts
-    doc_count_new = corpus_new.groupby("doc_id")["count"].sum()
+    # TODO generalize to multiple indices
+    doc_id_new_map = doc_id_new.copy()
+    doc_id_new_map.index = doc_id_new_map["doc_id"]
+    doc_id_new_map = doc_id_new_map["display-date"]
+    corpus_new["date"] = corpus_new["doc_id"].map(doc_id_new_map)
+    doc_id_old_map = doc_id_old.copy()
+    doc_id_old_map.index = doc_id_old_map["doc_id"]
+    doc_id_old_map = doc_id_old_map["display-date"]
+    corpus_old["date"] = corpus_old["doc_id"].map(doc_id_old_map)
+    doc_count_new = corpus_new.groupby("date")["count"].sum()
     doc_count_new = doc_count_new.sort_index()
-    doc_count_old = corpus_old.groupby("doc_id")["count"].sum()
+    doc_count_old = corpus_old.groupby("date")["count"].sum()
     doc_count_old = doc_count_old.sort_index()
-    assert_equal(doc_count_new.values(), doc_count_old.values())
+    assert_array_equal(doc_count_new.values, doc_count_old.values)
 
     # compare term counts
-    term_count_new = corpus_new.groupby("doc_id")["count"].sum()
+    term_id_new_map = term_id_new.copy()
+    term_id_new_map.index = term_id_new_map["term_id"]
+    term_id_new_map = term_id_new_map["term"]
+    corpus_new["term"] = corpus_new["term_id"].map(term_id_new_map)
+    term_id_old_map = term_id_old.copy()
+    term_id_old_map.index = term_id_old_map["term_id"]
+    term_id_old_map = term_id_old_map["term"]
+    corpus_old["term"] = corpus_old["term_id"].map(term_id_old_map)
+    term_count_new = corpus_new.groupby("term")["count"].sum()
     term_count_new = term_count_new.sort_index()
-    term_count_old = corpus_old.groupby("doc_id")["count"].sum()
+    term_count_old = corpus_old.groupby("term")["count"].sum()
     term_count_old = term_count_old.sort_index()
-    assert_equal(term_count_new.values(), term_count_old.values())
+    assert_array_equal(term_count_new.values, term_count_old.values)
 
 
 def test_wrapper(test_dir, **kwds):
@@ -141,13 +158,18 @@ def test_wrapper(test_dir, **kwds):
     None
     """
 
-    # TODO support more general config
-
     new_dir = os.path.join(test_dir, "DTDF")
     old_dir = os.path.join(test_dir, "arch")
 
-    make_DTDF(os.path.join(new_dir, "config.json"), new_dir,
-              source_type="mongodb")
+    # load config
+    with open(os.path.join(test_dir, "DTDF_config.json"), "r") as ifile:
+        DTDF_config = json.load(ifile)
+    config = DTDF_config["config"]
+    DTDFBuilder_kwds = DTDF_config["DTDFBuilder_kwds"]
+    doc_type = DTDF_config["doc_type"]
+
+    make_DTDF(config, new_dir, DTDFBuilder_kwds, source_type="mongodb",
+              doc_type=doc_type)
 
     # load tuples
     tup_new = load_data(new_dir)
@@ -159,3 +181,9 @@ def test_wrapper(test_dir, **kwds):
     for f in files:
         if f != "config.json":
             os.remove(os.path.join(new_dir, f))
+
+
+directories = [os.path.join("test_data", "T%d" % d) for d in range(1, 12)]
+for d in directories:
+    test_wrapper(d)
+    print d, "done!"

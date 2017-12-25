@@ -268,7 +268,7 @@ def _pre_tokenizer(doc):
     return n_doc
 
 
-def _unigram_tokenizer(doc, vocab_dict):
+def _unigrams_tokenizer(doc, vocab_dict):
     """special case of tokenizer for unigrams
 
     Parameters
@@ -298,8 +298,9 @@ def _unigram_tokenizer(doc, vocab_dict):
     return n_doc
 
 
-def _tokenizer(doc, vocab_dict, n_grams, mult_grams):
-    """converts list of terms into dict of token counts.
+def _ngrams_tokenizer(doc, vocab_dict, n_grams):
+    """converts list of terms into dict of token counts,
+    for the n-gram case.
 
     Parameters
     ----------
@@ -310,19 +311,11 @@ def _tokenizer(doc, vocab_dict, n_grams, mult_grams):
     n_grams : scalar
         token word count, e.g. n_grams == 1: unigrams
         n_grams == 2: bigrams
-    mult_grams : scalar or bool
-        indicator for whether n_grams should be inclusive.
-        If True, for n_grams > 1 also generate all lower
-        order n_grams, e.g. n_grams == 2: unigrams + bigrams
 
     Returns
     -------
     dictionary of token counts
     """
-
-    # handle faster special case
-    if n_grams == 1:
-        return _unigram_tokenizer(doc, vocab_dict)
 
     n_doc = {}
 
@@ -346,17 +339,41 @@ def _tokenizer(doc, vocab_dict, n_grams, mult_grams):
             else:
                 n_doc[term] += 1
 
-        # add multigrams if requested
-        if mult_grams and n_grams > 1:
-            for k_grams in range(1, n_grams):
-                for i in range(len(nt_doc) + 1 - k_grams):
-                    term = " ".join(nt_doc[i:i+k_grams])
-                    if term not in n_doc:
-                        n_doc[term] = 1
-                    else:
-                        n_doc[term] += 1
-
     return n_doc
+
+
+def _tokenizer(doc, vocab_dict, n_grams, mult_grams):
+    """converts list of terms into dict of token counts.
+
+    Parameters
+    ----------
+    doc : list
+        list of terms
+    vocab_dict : dict-like
+        map from unique term to clean unique term
+    n_grams : scalar
+        token word count, e.g. n_grams == 1: unigrams
+        n_grams == 2: bigrams
+    mult_grams : scalar or bool
+        indicator for whether n_grams should be inclusive.
+        If True, for n_grams > 1 also generate all lower
+        order n_grams, e.g. n_grams == 2: unigrams + bigrams
+
+    Returns
+    -------
+    dictionary of token counts
+    """
+
+    if n_grams == 1:
+        return _unigrams_tokenizer(doc, vocab_dict)
+
+    if n_grams > 1 and mult_grams == 0:
+        return _ngrams_tokenizer(doc, vocab_dict, n_grams)
+
+    if n_grams > 1 and mult_grams == 1:
+        n_doc = _ngrams_tokenizer(doc, vocab_dict, n_grams)
+        n_doc.update(_tokenizer(doc, vocab_dict, n_grams-1, mult_grams))
+        return n_doc
 
 
 def _token_vocab_map(doc, vocab_dict):
@@ -525,6 +542,7 @@ class DTDFBuilder(object):
         # TODO post DTDF cleaning (thresholding/agg_group)
         # TODO clean stemmers
         # TODO return DF instead of storing temp files first
+        # TODO Improve runtime
 
         self.str_parser = str_parser
         self.n_grams = n_grams

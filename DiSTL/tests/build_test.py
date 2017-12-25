@@ -22,7 +22,6 @@ T7  : X :   :   :   :   :   :   : X :   : X  :
 T8  :   : X :   :   :   :   :   :   : X :    :
 T9  :   : X :   : X :   :   :   :   : X :    :
 T10 :   : X :   :   :   :   :   : X : X :    :
-T11 :   :   : X :   :   :   :   :   : X :    :
 """
 from numpy.testing import assert_equal, assert_array_equal, assert_, assert_allclose
 from build import make_DTDF
@@ -183,8 +182,7 @@ def test_wrapper(test_dir, **kwds):
             os.remove(os.path.join(new_dir, f))
 
 
-#directories = [os.path.join("test_data", "T%d" % d) for d in range(1, 12)]
-directories = [os.path.join("test_data", "T%d" % d) for d in range(11, 12)]
+directories = [os.path.join("test_data", "T%d" % d) for d in range(1, 11)]
 for d in directories:
     test_wrapper(d)
     print d, "done!"

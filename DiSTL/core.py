@@ -52,12 +52,32 @@ class DTDF(pd.SparseDataFrame):
         return None
 
 
+    def find_freq_terms(self, count):
+
+        return None
+
+
+    def find_assoc(self, threshold):
+
+        return None
+
+
     def word_cloud(self):
 
         return None
 
 
     def similarity(self, freq):
+
+        return None
+
+
+    def least_sq(self, freq):
+
+        return None
+
+
+    def to_csv(self, data_dir):
 
         return None
 
@@ -90,12 +110,32 @@ class DDTDF(dd.DataFrame):
         return None
 
 
+    def find_freq_terms(self, count):
+
+        return None
+
+
+    def find_assoc(self, threshold):
+
+        return None
+
+
     def word_cloud(self):
 
         return None
 
 
     def similarity(self, freq):
+
+        return None
+
+
+    def least_sq(self, freq):
+
+        return None
+
+
+    def to_csv(self, data_dir):
 
         return None
 

@@ -543,6 +543,7 @@ class DTDFBuilder(object):
         # TODO clean stemmers
         # TODO return DF instead of storing temp files first
         # TODO Improve runtime
+        # TODO store config
 
         self.str_parser = str_parser
         self.n_grams = n_grams
@@ -772,6 +773,12 @@ class DTDFBuilder(object):
         dtm_df = dd.from_delayed(del_l)
         doc_df["doc_id"] = doc_df["new_doc_id"]
         doc_df = doc_df.drop("new_doc_id", axis=1)
+
+        # TODO Convert to DTDF
+
+        # TODO Post cleaning using DTDF
+
+        # TODO write to csv using DTDF
 
         # write results
         doc_id.to_csv(os.path.join(data_dir, "doc_id_*.csv"), index=False)

@@ -24,8 +24,8 @@ T9  :   : X :   : X :   :   :   :   : X :    :
 T10 :   : X :   :   :   :   :   : X : X :    :
 """
 from numpy.testing import assert_equal, assert_array_equal, assert_, assert_allclose
-from build import make_DTDF
-#from DiSTL.build import make_DTDF
+#from build import make_DTDF
+from DiSTL.build import make_DTDF
 import dask.dataframe as dd
 import dask.bag as db
 import pandas as pd

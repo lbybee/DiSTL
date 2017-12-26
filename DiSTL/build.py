@@ -17,10 +17,12 @@ DTDFBuilder is a class containing all the information required to
 clean a DTDF from source files, as well as the methods needed to
 build/clean the DTDF.  These methods will be called within make_DTDF.
 """
+from pymongo import MongoClient
+from dask import delayed
 import dask.dataframe as dd
-import dask.bag as db
 import pandas as pd
 import numpy as np
+import dask
 import glob
 import json
 import os
@@ -52,11 +54,11 @@ def _gen_docs_csv(file_pattern, text_column="text", **kwds):
     """
 
     files = glob.glob(file_pattern)
-    for f in files:
+    for i, f in enumerate(files):
         df = pd.read_csv(f)
         text = df[text_column].tolist()
         df = df.drop(text_column, axis=1)
-        yield df, text
+        yield i, (df, text)
 
 
 def _gen_docs_mongodb(config, doc_type="str", **kwds):
@@ -92,11 +94,11 @@ def _gen_docs_mongodb(config, doc_type="str", **kwds):
                 t_dict = {t["term"]: t["count"] for t in doc["txt"]}
                 yield (doc["_id"], t_dict)
 
-    if os.path.isfile(config):
+    if type(config) is dict:
+        config = config
+    elif os.path.isfile(config):
         with open(config, "r") as ifile:
             config = json.load(ifile)
-    elif type(config) is dict:
-        config = config
     else:
         raise ValueError("Unsupported config type")
 
@@ -107,10 +109,10 @@ def _gen_docs_mongodb(config, doc_type="str", **kwds):
     client = MongoClient()
     client.admin.command({"setParameter": 1,
                           "cursorTimeoutMillis": 60000000})
-    for col in collections:
+    for i, col in enumerate(collections):
 
         agg = client[db][col].aggregate(pipeline, allowDiskUse=True)
-        yield doc_gen(agg)
+        yield i, doc_gen(agg)
 
 
 def make_DTDF(source, DTDF_dir, inp_DTDFBuilder=None, source_type="csv",
@@ -188,6 +190,8 @@ def make_DTDF(source, DTDF_dir, inp_DTDFBuilder=None, source_type="csv",
     else:
         raise ValueError("Unsupported type for inp_DTDFBuilder")
 
+    # build vocab
+
     # get document generator
     if source_type == "csv":
         doc_group_gen = _gen_docs_csv(source, **gen_kwds)
@@ -195,12 +199,20 @@ def make_DTDF(source, DTDF_dir, inp_DTDFBuilder=None, source_type="csv",
         doc_group_gen = _gen_docs_mongodb(source, **gen_kwds)
     else:
         raise ValueError("Unsupported source_type %s" % source_type)
-
-    # build vocab
+    # activate generator
     inst_DTDFBuilder.build_vocab(doc_group_gen, DTDF_dir, **vocab_kwds)
     inst_DTDFBuilder.clean_vocab(DTDF_dir)
 
     # build DTDF
+
+    # get document generator
+    if source_type == "csv":
+        doc_group_gen = _gen_docs_csv(source, **gen_kwds)
+    elif source_type == "mongodb":
+        doc_group_gen = _gen_docs_mongodb(source, **gen_kwds)
+    else:
+        raise ValueError("Unsupported source_type %s" % source_type)
+    # activate generator
     inst_DTDFBuilder.build_DTDF(doc_group_gen, DTDF_dir, **DTDF_kwds)
     inst_DTDFBuilder.clean_DTDF(DTDF_dir)
 
@@ -256,7 +268,7 @@ def _pre_tokenizer(doc):
     return n_doc
 
 
-def _unigram_tokenizer(doc, vocab_dict):
+def _unigrams_tokenizer(doc, vocab_dict):
     """special case of tokenizer for unigrams
 
     Parameters
@@ -280,8 +292,52 @@ def _unigram_tokenizer(doc, vocab_dict):
                 n_doc[term] = 1
             else:
                 n_doc[term] += 1
-        except
+        except:
             continue
+
+    return n_doc
+
+
+def _ngrams_tokenizer(doc, vocab_dict, n_grams):
+    """converts list of terms into dict of token counts,
+    for the n-gram case.
+
+    Parameters
+    ----------
+    doc : list
+        list of terms
+    vocab_dict : dict-like
+        map from unique term to clean unique term
+    n_grams : scalar
+        token word count, e.g. n_grams == 1: unigrams
+        n_grams == 2: bigrams
+
+    Returns
+    -------
+    dictionary of token counts
+    """
+
+    n_doc = {}
+
+    for d_ind in range(len(doc) + 1 - n_grams):
+
+        # generate cleaned terms conditional on vocab_dict
+        t_doc = doc[d_ind:d_ind+n_grams]
+        nt_doc = []
+        for term in t_doc:
+            try:
+                term = vocab_dict[term]
+                nt_doc.append(term)
+            except:
+                continue
+
+        # generate the token and add to dict
+        if len(nt_doc) == n_grams:
+            term = " ".join(nt_doc)
+            if term not in n_doc:
+                n_doc[term] = 1
+            else:
+                n_doc[term] += 1
 
     return n_doc
 
@@ -308,43 +364,16 @@ def _tokenizer(doc, vocab_dict, n_grams, mult_grams):
     dictionary of token counts
     """
 
-    # handle faster special case
     if n_grams == 1:
-        return _unigram_tokenizer(doc, vocab_dict)
+        return _unigrams_tokenizer(doc, vocab_dict)
 
-    n_doc = {}
+    if n_grams > 1 and mult_grams == 0:
+        return _ngrams_tokenizer(doc, vocab_dict, n_grams)
 
-    for d_ind in range(len(doc) + 1 - n_grams):
-
-        # generate cleaned terms conditional on vocab_dict
-        t_doc = doc[d_ind:d_ind+n_grams]
-        nt_doc = []
-        for term in t_doc:
-            try:
-                term = vocab_dict[term]
-                nt_doc.append(term)
-            except:
-                continue
-
-        # generate the token and add to dict
-        if len(nt_doc) == n_grams:
-            term = " ".join(nt_doc)
-            if term not in n_doc:
-                n_doc[term] = 1
-            else:
-                n_doc[term] += 1
-
-        # add multigrams if requested
-        if mult_grams and n_grams > 1:
-            for k_grams in range(n_grams - 1):
-                for i in range(len(nt_doc) + 1 - k_grams):
-                    term = " ".join(nt_doc[i:i+k_grams])
-                    if term not in n_doc:
-                        n_doc[term] = 1
-                    else:
-                        n_doc[term] += 1
-
-    return n_doc
+    if n_grams > 1 and mult_grams == 1:
+        n_doc = _ngrams_tokenizer(doc, vocab_dict, n_grams)
+        n_doc.update(_tokenizer(doc, vocab_dict, n_grams-1, mult_grams))
+        return n_doc
 
 
 def _token_vocab_map(doc, vocab_dict):
@@ -367,12 +396,12 @@ def _token_vocab_map(doc, vocab_dict):
     n_doc = {}
     for k in doc:
         try:
-            k = vocab_dict[k]
-            if k not in n_doc:
-                n_doc[k] = doc[k]
+            n_k = vocab_dict[k]
+            if n_k not in n_doc:
+                n_doc[n_k] = doc[k]
             else:
-                n_doc[k] += doc[k]
-        except:
+                n_doc[n_k] += doc[k]
+        except Exception as e:
             continue
 
     return n_doc
@@ -446,7 +475,7 @@ def _default_lemmatizer(unstemmed):
     vocab = unstemmed.copy()
     for stem in [es0_stemmer, es1_stemmer, s_stemmer, ly_stemmer, ed0_stemmer,
                  ed1_stemmer, ing0_stemmer, ing1_stemmer, ing2_stemmer]:
-        stem_map = gen_stem_map(vocab["term"].drop_duplicates(), stem)
+        stem_map = _gen_stem_map(vocab["term"].drop_duplicates(), stem)
         vocab["term"] = vocab["term"].map(stem_map)
     return vocab["term"]
 
@@ -494,14 +523,17 @@ class DTDFBuilder(object):
     <pre|post>_tfidf_thresh : scalar
         tfidf threshold below for <pre|post>-stemming/stop words
         thresholding.
+    <pre|post>_term_length : scalar
+        minimum length required for term
     agg_group : TBA
     """
 
     def __init__(self, str_parser=_default_parser, n_grams=1, mult_grams=0,
                  stop_words=None, regex_stop_words=None, stemmer=None,
                  pre_doc_lthresh=0., pre_doc_uthresh=1.,
-                 pre_tfidf_thresh=0., post_doc_lthresh=0.,
-                 post_doc_lthresh=0., post_tfidf_thresh=0.,
+                 pre_tfidf_thresh=0., pre_term_length=0,
+                 post_doc_lthresh=0., post_doc_uthresh=0.,
+                 post_tfidf_thresh=0., post_term_length=0,
                  agg_group=None):
 
         # TODO Logging
@@ -509,6 +541,8 @@ class DTDFBuilder(object):
         # TODO Compression for data files
         # TODO post DTDF cleaning (thresholding/agg_group)
         # TODO clean stemmers
+        # TODO return DF instead of storing temp files first
+        # TODO Improve runtime
 
         self.str_parser = str_parser
         self.n_grams = n_grams
@@ -520,13 +554,14 @@ class DTDFBuilder(object):
                 self.stemmer = _default_lemmatizer
             else:
                 raise ValueError("Unsupported stemmer type")
-        self.stemmer = stemmer
         self.pre_doc_lthresh=pre_doc_lthresh
         self.pre_doc_uthresh=pre_doc_uthresh
         self.pre_tfidf_thresh=pre_tfidf_thresh
+        self.pre_term_length=pre_term_length
         self.post_doc_lthresh=post_doc_lthresh
         self.post_doc_uthresh=post_doc_uthresh
         self.post_tfidf_thresh=post_tfidf_thresh
+        self.post_term_length=post_term_length
 
 
     def build_base_DTDF(self, doc_group, data_dir, doc_type="str", mnum=0):
@@ -571,7 +606,7 @@ class DTDFBuilder(object):
         """
 
         # load the vocab dict to map clean terms
-        vocab_dict_file = os.path.join(data_dir, "vocab_dict.csv"))
+        vocab_dict_file = os.path.join(data_dir, "vocab_dict.csv")
         if not os.path.isfile(vocab_dict_file):
             raise FileNotFoundError("vocab_dict.csv")
         vocab_dict = pd.read_csv(vocab_dict_file)
@@ -675,11 +710,11 @@ class DTDFBuilder(object):
         """
 
         def wrapper(tup):
-           i, doc_group = tup
-           self.build_base_DTDF(doc_group, data_dir, doc_type, i)
+            i, doc_group = tup
+            self.build_base_DTDF(doc_group, data_dir, doc_type, i)
 
-        bag = db.from_sequence(doc_group_gen).map(wrapper)
-        bag.compute()
+        del_l = [delayed(wrapper)(tup) for tup in doc_group_gen]
+        dask.compute(del_l)
 
 
     def clean_DTDF(self, data_dir):
@@ -707,7 +742,7 @@ class DTDFBuilder(object):
         dtm_df = dd.read_csv(tmp_dtm_files)
 
         # build term id
-        term_id = pd.DataFrame(tmp_dtm_df["term"].unique().compute())
+        term_id = pd.DataFrame(dtm_df["term"].unique().compute())
         term_id["term_id"] = term_id.index
 
         # map term -> term_id in sparse DTDF
@@ -718,17 +753,28 @@ class DTDFBuilder(object):
         dtm_df = dtm_df[["doc_id", "term_id", "count"]]
 
         # get correct doc id
-        doc_id_map = doc_df.copy()
-        doc_id_map["t_doc_id"] = 1
-        doc_id_map["t_doc_id"] = doc_id_map["t_doc_id"].cumsum() - 1
-        doc_id_map.index = doc_id_map["doc_id"]
-        doc_id_map = doc_id_map["t_doc_id"]
-        dtm_df["doc_id"] = dtm_df["doc_id"].map(doc_id_map)
-        doc_df["doc_id"] = doc_df["doc_id"].map(doc_id_map)
+        doc_df["new_doc_id"] = 1
+        doc_df["new_doc_id"] = doc_df["new_doc_id"].cumsum() - 1
+
+        delayed_dtm_df = dtm_df.to_delayed()
+        delayed_doc_df = doc_df.to_delayed()
+
+        def zip_mapper(dtm_df_i, doc_df_i):
+
+            doc_df_i.index = doc_df_i["doc_id"]
+            id_dict = doc_df_i["new_doc_id"].to_dict()
+            dtm_df_i["doc_id"] =  dtm_df_i["doc_id"].map(id_dict)
+            return dtm_df_i
+
+        del_l = [delayed(zip_mapper)(dtm_df_i, doc_df_i)
+                 for dtm_df_i, doc_df_i in
+                 zip(delayed_dtm_df, delayed_doc_df)]
+        dtm_df = dd.from_delayed(del_l)
+        doc_df["doc_id"] = doc_df["new_doc_id"]
+        doc_df = doc_df.drop("new_doc_id", axis=1)
 
         # write results
-        doc_id = doc_df.compute()
-        doc_id.to_csv(os.path.join(data_dir, "doc_id.csv"), index=False)
+        doc_id.to_csv(os.path.join(data_dir, "doc_id_*.csv"), index=False)
 
         dtm_df.to_csv(os.path.join(data_dir, "DTDF_*.csv"), index=False)
 
@@ -787,18 +833,18 @@ class DTDFBuilder(object):
         # set up doc_builder based on doc_type
         if doc_type == "str":
 
-            def doc_builder(doc, vocab_dict):
+            def doc_builder(doc):
                 doc = self.str_parser(doc)
                 return _pre_tokenizer(doc)
 
         elif doc_type == "list":
 
-            def doc_builder(doc, vocab_dict):
+            def doc_builder(doc):
                 return _pre_tokenizer(doc)
 
         elif doc_type == "dict":
 
-            def doc_builder(doc, vocab_dict):
+            def doc_builder(doc):
                 return doc
 
         else:
@@ -815,7 +861,7 @@ class DTDFBuilder(object):
         # account for different possible doc_groups
         if type(doc_group) is tuple:
             for doc in doc_group[1]:
-                doc = doc_builder(doc, vocab_dict)
+                doc = doc_builder(doc)
                 for k in doc:
                     if k not in vocab:
                         vocab[k] = [1, 1]
@@ -826,7 +872,7 @@ class DTDFBuilder(object):
 
         else:
             for index, doc in doc_group:
-                doc = doc_builder(doc, vocab_dict)
+                doc = doc_builder(doc)
                 for k in doc:
                     if k not in vocab:
                         vocab[k] = [1, 1]
@@ -872,11 +918,11 @@ class DTDFBuilder(object):
         """
 
         def wrapper(tup):
-           i, doc_group = tup
-           self.build_base_vocab(doc_group, data_dir, doc_type, i)
+            i, doc_group = tup
+            self.build_base_vocab(doc_group, data_dir, doc_type, i)
 
-        bag = db.from_sequence(doc_group_gen).map(wrapper)
-        bag.compute()
+        del_l = [delayed(wrapper)(tup) for tup in doc_group_gen]
+        dask.compute(del_l)
 
 
     def clean_vocab(self, data_dir):
@@ -915,7 +961,7 @@ class DTDFBuilder(object):
             vocab = vocab[vocab["doc_term_count"] >= thresh]
         if self.pre_doc_uthresh < 1:
             thresh = D * self.pre_doc_uthresh
-            vocab = vocab[vocab["doc_term_count"] < thresh]
+            vocab = vocab[vocab["doc_term_count"] <= thresh]
 
         # tfidf thresholding
         if self.pre_tfidf_thresh > 0:
@@ -926,7 +972,7 @@ class DTDFBuilder(object):
 
         # removing stop words
         if self.stop_words is not None:
-            vocab = vocab[~vocab["term"].sin(self.stop_words)]
+            vocab = vocab[~vocab["term"].isin(self.stop_words)]
 
         # remove regex stop words
         if self.regex_stop_words is not None:
@@ -935,15 +981,21 @@ class DTDFBuilder(object):
 
         # apply stemming
         if self.stemmer is not None:
-            vocab["stem"] = self.stemmer(vocab["term"])
+            vocab["stem"] = self.stemmer(vocab[["term"]])
         else:
             vocab["stem"] = vocab["term"]
+
+        # remove terms below term length
+        if self.pre_term_length > 0:
+            fn = lambda x: len(x) >= self.pre_term_length
+            vocab = vocab[vocab["stem"].apply(fn)]
 
         # add doc count to vocab
         vocab["doc_count"] = D
 
         vocab.to_csv(os.path.join(data_dir, "vocab.csv"), index=False)
-        vocab = vocab["stem"]
+        vocab.index = vocab["term"]
+        vocab = vocab[["stem"]]
         vocab.to_csv(os.path.join(data_dir, "vocab_dict.csv"))
 
         # remove tmp files

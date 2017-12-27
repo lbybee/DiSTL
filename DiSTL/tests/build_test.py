@@ -147,7 +147,7 @@ def test_df_comp(tup_old, tup_new):
     assert_array_equal(term_count_new.values, term_count_old.values)
 
 
-def test_wrapper(test_dir, **kwds):
+def build_test_wrapper(test_dir, **kwds):
     """wraps all the code needed to build a new DTM, compare with the
     old DTM and clean up after it is done
 
@@ -185,8 +185,3 @@ def test_wrapper(test_dir, **kwds):
     for f in files:
         if f != "config.json":
             os.remove(os.path.join(new_dir, f))
-
-
-directories = [os.path.join("test_data", "T%d" % d) for d in range(1, 11)]
-for d in directories:
-    test_wrapper(d)

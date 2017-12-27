@@ -1,3 +1,5 @@
 from numpy.testing import assert_equal
+import sys
 
-assert_equal(1, 2)
+
+sys.exit(9000)

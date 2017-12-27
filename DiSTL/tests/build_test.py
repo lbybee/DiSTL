@@ -161,7 +161,6 @@ def build_test_wrapper(test_dir, **kwds):
     None
     """
 
-    raise ValueError("test")
     new_dir = os.path.join(test_dir, "DTDF")
     old_dir = os.path.join(test_dir, "arch")
 

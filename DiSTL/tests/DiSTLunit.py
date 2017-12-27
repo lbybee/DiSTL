@@ -1,5 +1,3 @@
-from numpy.testing import assert_equal
 import sys
 
-
-sys.exit(9000)
+sys.exit(1)

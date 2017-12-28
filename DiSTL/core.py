@@ -43,38 +43,115 @@ class DTDF(pd.SparseDataFrame):
 
 
     def idf(self):
+        """generates the inverse document-frequency for the DTDF
 
-        return None
+        Returns
+        -------
+        numpy array of idf, log(D / (D_v + 1))
+        """
+
+        D, V = self.shape
+        D_v = (self != 0).sum(axis=0)
+        idf = np.log(D / (D_v + 1.))
+        idf = np.squeeze(np.asarray(idf))
+        return idf
 
 
     def tfidf(self):
+        """returns a term-frequency, inverse document-frequency (TF-IDF)
+        version of the DTDF
 
-        return None
+        Returns
+        -------
+        TF-IDF version of DTDF
+        """
+
+        idf = self.idf()
+        return self.div(self.sum(axis=1), axis=0).mul(idf)
 
 
     def find_freq_terms(self, count):
+        """returns a list of the <count> most frequent terms
 
-        return None
+        Parameters
+        ----------
+        count : scalar
+            number of terms to return
 
+        Returns
+        -------
+        array of terms
+        """
 
-    def find_assoc(self, threshold):
-
-        return None
+        group = self.sum()
+        group = group.sort_values()
+        return group[:count]
 
 
     def word_cloud(self):
+        """saves a word cloud to the corresponding f_name
 
-        return None
+        Parameters
+        ----------
+        f_name : str
+            location of file
+
+        Returns
+        -------
+        None
+        """
+
+        from wordcloud import WordCloud, STOPWORDS
+        import matplotlib.pyplot as plt
+
+        group = self.sum()
+        group = group.to_dict()
+        wordcloud = WordCloud(stopwords=STOPWORDS, background_color="white",
+                              width=800, height=500).fit_words(group)
+        wordcloud.to_file(f_name)
 
 
-    def similarity(self, freq):
+    def similarity(self, freq, method="cosine"):
+        """This method generates a vector of similarities for each document
+        using the desired method
 
-        return None
+        Paramters
+        ---------
+        freq : array-like
+            array of values for comparison vocab.  Can be multidimensional
+            in the leastsq case
+        method : str
+            similarity method
+            1. cosine
+            2. leastsq
 
+        Returns
+        -------
+        array of similarities
+        """
 
-    def least_sq(self, freq):
+        # prep freq
 
-        return None
+        # define method
+        if method == "cosine":
+
+            freq = freq.div(np.linalg.norm(freq))
+
+            def sim_method(row):
+                return row.div(np.linalg.norm(row)).mult(freq)
+
+        elif method == "leastsq":
+
+            import statsmodels.api as sm
+
+            def sim_method(row):
+                mod = sm.OLS(row, freq)
+                return mod.fit().params
+
+        else:
+            raise ValueError("Unknown method %s" % method)
+
+        return self.apply(sim_method)
 
 
     def to_csv(self, data_dir):
@@ -101,43 +178,125 @@ class DDTDF(dd.DataFrame):
 
 
     def idf(self):
+        """generates the inverse document-frequency for the DDTDF
 
-        return None
+        Returns
+        -------
+        numpy array of idf, log(D / (D_v + 1))
+        """
+
+        D, V = self.shape
+        D_v = (self != 0).sum(axis=0)
+        idf = np.log(D / (D_v + 1.))
+        idf = np.squeeze(np.asarray(idf))
+        return idf
 
 
     def tfidf(self):
+        """returns a term-frequency inverse document-frequency (TF-IDF)
+        version of the DDTDF
 
-        return None
+        Returns
+        -------
+        TF-IDF version of DDTDF
+        """
+
+        idf = self.idf()
+        return self.div(self.sum(axis=1), axis=0).mul(idf)
 
 
     def find_freq_terms(self, count):
+        """returns a list of the <count> most frequent terms
 
-        return None
+        Parameters
+        ----------
+        count : scalar
+            number of terms to return
 
+        Returns
+        -------
+        array of terms
+        """
 
-    def find_assoc(self, threshold):
-
-        return None
-
-
-    def word_cloud(self):
-
-        return None
-
-
-    def similarity(self, freq):
-
-        return None
+        group = self.sum()
+        group = group.sort_values()
+        return group[:count]
 
 
-    def least_sq(self, freq):
+    def word_cloud(self, f_name):
+        """saves a word cloud to the corresponding f_name
 
-        return None
+        Parameters
+        ----------
+        f_name : str
+            location of file
+
+        Returns
+        -------
+        None
+        """
+
+        from wordcloud import WordCloud, STOPWORDS
+        import matplotlib.pyplot as plt
+
+        group = self.sum()
+        group = group.to_dict()
+        wordcloud = WordCloud(stopwords=STOPWORDS, background_color="white",
+                              width=800, height=500).fit_words(group)
+        wordcloud.to_file(f_name)
+
+
+    def similarity(self, freq, method="cosine"):
+        """This method generates a vector of similarities for each document
+        using the desired method
+
+        Paramters
+        ---------
+        freq : array-like
+            array of values for comparison vocab.  Can be multidimensional
+            in the leastsq case
+        method : str
+            similarity method
+            1. cosine
+            2. leastsq
+
+        Returns
+        -------
+        array of similarities
+        """
+
+        # prep freq
+
+        # define method
+        if method == "cosine":
+
+            freq = freq.div(np.linalg.norm(freq))
+
+            def sim_method(row):
+                return row.div(np.linalg.norm(row)).mult(freq)
+
+        elif method == "leastsq":
+
+            import statsmodels.api as sm
+
+            def sim_method(row):
+                mod = sm.OLS(row, freq)
+                return mod.fit().params
+
+        else:
+            raise ValueError("Unknown method %s" % method)
+
+        return self.apply(sim_method)
 
 
     def to_csv(self, data_dir):
 
-        return None
+        # write results
+        doc_id.to_csv(os.path.join(data_dir, "doc_id_*.csv"), index=False)
+
+        dtm_df.to_csv(os.path.join(data_dir, "DTDF_*.csv"), index=False)
+
+        term_id.to_csv(os.path.join(data_dir, "term_id.csv"), index=False)
 
 
 # ---------------- #

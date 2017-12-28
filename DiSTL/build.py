@@ -774,18 +774,27 @@ class DTDFBuilder(object):
         doc_df["doc_id"] = doc_df["new_doc_id"]
         doc_df = doc_df.drop("new_doc_id", axis=1)
 
-        # TODO Convert to DTDF
+        # convert to DDTDF and write to csv
+        delayed_dtm_df = dtm_df.to_delayed()
+        delayed_doc_df = doc_df.to_delayed()
 
-        # TODO Post cleaning using DTDF
+        def dtm_maker(dtm_i, doc_i):
 
-        # TODO write to csv using DTDF
+            D = doc_i.shape[0]
+            doc_i = doc_id.drop("doc_id", axis=1)
+            sparse_mat = ss.csr_matrix((dtm_i["count"],
+                                        (dtm_i["doc_id"],
+                                         dtm_i["term_id"])), (D, P))
+            sparse_df = DTDF(sparse_mat)
+            sparse_df.columns = term_id["term"]
+            sparse_df.index = doc_i
+            return sparse_df
 
-        # write results
-        doc_id.to_csv(os.path.join(data_dir, "doc_id_*.csv"), index=False)
-
-        dtm_df.to_csv(os.path.join(data_dir, "DTDF_*.csv"), index=False)
-
-        term_id.to_csv(os.path.join(data_dir, "term_id.csv"), index=False)
+        del_l = [delayed(dtm_maker)(dtm_i, doc_i)
+                 for dtm_i, doc_i in zip(delayed_dtm_df, delayed_doc_df)]
+        dtm = dd.from_delayed(del_l)
+        ddtdf = DDTDF(dtm)
+        ddtdf.to_csv(data_dir)
 
         # remove tmp files
         tmp_doc_files = glob.glob(tmp_doc_files)

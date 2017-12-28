@@ -525,7 +525,8 @@ class DTDFBuilder(object):
         thresholding.
     <pre|post>_term_length : scalar
         minimum length required for term
-    agg_group : TBA
+    agg_group : groups
+        cols/index elements to groupby and sum
     """
 
     def __init__(self, str_parser=_default_parser, n_grams=1, mult_grams=0,
@@ -794,6 +795,11 @@ class DTDFBuilder(object):
                  for dtm_i, doc_i in zip(delayed_dtm_df, delayed_doc_df)]
         dtm = dd.from_delayed(del_l)
         ddtdf = DDTDF(dtm)
+
+        # post cleaning
+
+
+        # store results
         ddtdf.to_csv(data_dir)
 
         # remove tmp files

@@ -38,8 +38,8 @@ class DTDF(pd.SparseDataFrame):
         key words for building SparseDataFrame
     """
 
-    def __init__(self, **kwds):
-        super(DTDF, self).__init__(**kwds)
+    def __init__(self, *args, **kwds):
+        pd.SparseDataFrame.__init__(self, *args, **kwds)
 
 
     def idf(self):
@@ -86,6 +86,29 @@ class DTDF(pd.SparseDataFrame):
         group = self.sum()
         group = group.sort_values()
         return group[:count]
+
+
+    def find_assoc(self, term, threshold):
+        """finds the terms most associated with the specified
+        term, those terms whose correlation is above the given
+        threshold
+
+        term : str
+            term to find association with
+        threshold : scalar
+            level above which to keep terms
+
+        Returns
+        -------
+        series of terms and associations
+        """
+
+        if term in self.columns:
+            corr = self.corr().compute()
+            t_corr = corr[term]
+            return t_corr[t_corr > threshold]
+        else:
+            raise ValueError("%s not in columns")
 
 
     def word_cloud(self):
@@ -252,6 +275,29 @@ class DDTDF(dd.DataFrame):
         return group[:count]
 
 
+    def find_assoc(self, term, threshold):
+        """finds the terms most associated with the specified
+        term, those terms whose correlation is above the given
+        threshold
+
+        term : str
+            term to find association with
+        threshold : scalar
+            level above which to keep terms
+
+        Returns
+        -------
+        series of terms and associations
+        """
+
+        if term in self.columns:
+            corr = self.corr().compute()
+            t_corr = corr[term]
+            return t_corr[t_corr > threshold]
+        else:
+            raise ValueError("%s not in columns")
+
+
     def word_cloud(self, f_name):
         """saves a word cloud to the corresponding f_name
 
@@ -407,13 +453,14 @@ def loadDTDF(data_dir, distributed=0):
     doc_id = dd.read_csv(os.path.join(data_dir, "doc_id_*.csv"))
     doc_delayed = doc_id.to_delayed()
     term_id = pd.read_csv(os.path.join(data_dir, "term_id.csv"))
+#    D = len(doc_id)
     P = term_id.shape[0]
 
     def dtm_maker(dtm_i, doc_i):
 
         D = doc_i.shape[0]
         doc_i = doc_id.drop("doc_id", axis=1)
-        sparse_mat = ss.csr_matrix((dtm_i["count"],
+        sparse_mat = ss.coo_matrix((dtm_i["count"],
                                     (dtm_i["doc_id"],
                                      dtm_i["term_id"])), (D, P))
         sparse_df = DTDF(sparse_mat)

@@ -18,8 +18,10 @@ clean a DTDF from source files, as well as the methods needed to
 build/clean the DTDF.  These methods will be called within make_DTDF.
 """
 from pymongo import MongoClient
+from core import DDTDF, DTDF
 from dask import delayed
 import dask.dataframe as dd
+import scipy.sparse as ss
 import pandas as pd
 import numpy as np
 import dask
@@ -758,6 +760,10 @@ class DTDFBuilder(object):
         doc_df["new_doc_id"] = 1
         doc_df["new_doc_id"] = doc_df["new_doc_id"].cumsum() - 1
 
+        # get DTM dimensions
+#        D = len(doc_df)
+        P = term_id.shape[0]
+
         delayed_dtm_df = dtm_df.to_delayed()
         delayed_doc_df = doc_df.to_delayed()
 
@@ -782,7 +788,7 @@ class DTDFBuilder(object):
         def dtm_maker(dtm_i, doc_i):
 
             D = doc_i.shape[0]
-            doc_i = doc_id.drop("doc_id", axis=1)
+            doc_i = doc_i.drop("doc_id", axis=1)
             sparse_mat = ss.coo_matrix((dtm_i["count"],
                                         (dtm_i["doc_id"],
                                          dtm_i["term_id"])), (D, P))

@@ -153,15 +153,16 @@ class DTDF(pd.SparseDataFrame):
         array of similarities
         """
 
-        # prep freq
-
         # define method
         if method == "cosine":
 
-            freq = freq.div(np.linalg.norm(freq))
+            freq = freq / np.linalg.norm(freq)
 
             def sim_method(row):
-                return row.div(np.linalg.norm(row)).mult(freq)
+                row /= np.linalg.norm(row)
+                row *= freq
+                row[row.isnull()] = 0
+                return row.sum()
 
         elif method == "leastsq":
 
@@ -345,10 +346,13 @@ class DDTDF(dd.DataFrame):
         # define method
         if method == "cosine":
 
-            freq = freq.div(np.linalg.norm(freq))
+            freq = freq / np.linalg.norm(freq)
 
             def sim_method(row):
-                return row.div(np.linalg.norm(row)).mult(freq)
+                row /= np.linalg.norm(row)
+                row *= freq
+                row[row.isnull()] = 0
+                return row.sum()
 
         elif method == "leastsq":
 

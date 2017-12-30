@@ -155,8 +155,36 @@ class DTDF(pd.SparseDataFrame):
 
 
     def to_csv(self, data_dir):
+        """stores the DTDF into the corresponding data_dir, since
+        this is not a parallel instance (a DDTDF), we store one
+        file for the doc_id and dtm
 
-        return None
+        Parameters
+        ----------
+        data_dir : str
+            location where results are stored
+
+        Returns
+        -------
+        None
+        """
+
+        # term id
+        terms = self.columns
+        term_id = pd.DataFrame({"term": terms, "term_id": range(len(terms))})
+        term_id.to_csv(os.path.join(data_dir, "term_id.csv"))
+
+        # doc id
+        docs = self.index
+        doc_id = pd.DataFrame(docs)
+        doc_id["doc_id"] = range(len(doc_id))
+        doc_id.to_csv(os.path.join(data_dir, "doc_id_0.csv"))
+
+        # DTDF sparse counts
+        mat = self.to_coo()
+        dtm_df = pd.DataFrame({"doc_id": mat.row, "term_id": mat.col,
+                               "count": mat.data})
+        dtm_df.to_csv(os.path.join(data_dir, "DTDF_0.csv"))
 
 
 # -------------- #
@@ -185,7 +213,8 @@ class DDTDF(dd.DataFrame):
         numpy array of idf, log(D / (D_v + 1))
         """
 
-        D, V = self.shape
+        D = len(self)
+        V = len(self.columns)
         D_v = (self != 0).sum(axis=0)
         idf = np.log(D / (D_v + 1.))
         idf = np.squeeze(np.asarray(idf))
@@ -290,13 +319,64 @@ class DDTDF(dd.DataFrame):
 
 
     def to_csv(self, data_dir):
+        """stores the DDTDF into the corresponding data_dir, since
+        this is a parallel instance (a DDTDF not DTDF), we store
+        multiple files for the doc_id and dtm, one for each partition
 
-        # write results
-        doc_id.to_csv(os.path.join(data_dir, "doc_id_*.csv"), index=False)
+        Parameters
+        ----------
+        data_dir : str
+            location where results are stored
 
-        dtm_df.to_csv(os.path.join(data_dir, "DTDF_*.csv"), index=False)
+        Returns
+        -------
+        None
+        """
 
-        term_id.to_csv(os.path.join(data_dir, "term_id.csv"), index=False)
+        # TODO fix doc_id
+
+        # term id
+        terms = self.columns
+        term_id = pd.DataFrame({"term": terms, "term_id": range(len(terms))})
+        term_id.to_csv(os.path.join(data_dir, "term_id.csv"))
+
+        # prep doc id
+        docs = self.index
+        docs_delayed = docs.to_delayed()
+
+        def index_to_df(doc_i):
+            doc_i = pd.DataFrame(doc_i)
+            doc_i["doc_id"] = 1
+            return doc_i
+
+        del_l = [delayed(index_to_df)(doc_i) for doc_i in docs_delayed]
+        doc_id = dd.from_delayed(del_l)
+        doc_ind = doc_id["doc_id"].cumsum() - 1
+        doc_id = doc_id.drop("doc_id", axis=1)
+
+        # write doc id and dtm
+        dtm_delayed = self.to_delayed()
+        doc_id_delayed = doc_id.to_delayed()
+        doc_ind_delayed = doc_ind.to_delayed()
+
+        def writer(dtm_i, doc_i, doc_ind_i, i):
+
+            # write doc id
+            doc_i["doc_id"] = doc_ind_i
+            doc_i.to_csv(os.path.join(data_dir, "doc_id_%d.csv" % i))
+
+            # write dtm
+            mat = self.to_coo()
+            dtm_df = pd.DataFrame({"doc_id": mat.row, "term_id": mat.col,
+                                   "count": mat.data})
+            dtm_df.to_csv(os.path.join(data_dir, "DTDF_%d.csv" % i))
+
+        # compute writers
+        del_l = [delayed(writer)(dtm_i, doc_i, doc_ind_i, i)
+                 for dtm_i, doc_i, doc_ind_i, i in
+                 zip(dtm_delayed, doc_id_delayed, doc_ind_delayed,
+                     range(len(dtm_delayed)))]
+        dask.compute(*del_l)
 
 
 # ---------------- #

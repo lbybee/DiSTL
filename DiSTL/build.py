@@ -783,7 +783,7 @@ class DTDFBuilder(object):
 
             D = doc_i.shape[0]
             doc_i = doc_id.drop("doc_id", axis=1)
-            sparse_mat = ss.csr_matrix((dtm_i["count"],
+            sparse_mat = ss.coo_matrix((dtm_i["count"],
                                         (dtm_i["doc_id"],
                                          dtm_i["term_id"])), (D, P))
             sparse_df = DTDF(sparse_mat)

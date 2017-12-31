@@ -167,9 +167,12 @@ class DTDF(pd.SparseDataFrame):
         elif method == "leastsq":
 
             import statsmodels.api as sm
+            freq = pd.DataFrame(freq)
+            cols = self.columns
+            freq = freq.reindex(cols)
 
             def sim_method(row):
-                mod = sm.OLS(row, freq)
+                mod = sm.OLS(row, freq, missing=drop)
                 return mod.fit().params
 
         else:
@@ -357,9 +360,12 @@ class DDTDF(dd.DataFrame):
         elif method == "leastsq":
 
             import statsmodels.api as sm
+            freq = pd.DataFrame(freq)
+            cols = self.columns
+            freq = freq.reindex(cols)
 
             def sim_method(row):
-                mod = sm.OLS(row, freq)
+                mod = sm.OLS(row, freq, missing=drop)
                 return mod.fit().params
 
         else:

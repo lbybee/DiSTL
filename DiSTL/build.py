@@ -18,12 +18,13 @@ clean a DTDF from source files, as well as the methods needed to
 build/clean the DTDF.  These methods will be called within make_DTDF.
 """
 from pymongo import MongoClient
-from core import DDTDF, DTDF
 from dask import delayed
+from core import DTDF
 import dask.dataframe as dd
-import scipy.sparse as ss
+import dask.array as da
 import pandas as pd
 import numpy as np
+import sparse
 import dask
 import glob
 import json
@@ -718,7 +719,7 @@ class DTDFBuilder(object):
             self.build_base_DTDF(doc_group, data_dir, doc_type, i)
 
         del_l = [delayed(wrapper)(tup) for tup in doc_group_gen]
-        dask.compute(del_l)
+        dask.compute(*del_l)
 
 
     def clean_DTDF(self, data_dir):
@@ -740,7 +741,7 @@ class DTDFBuilder(object):
         """
 
         tmp_doc_files = os.path.join(data_dir, "tmp_doc_id_*.csv")
-        doc_df = dd.read_csv(tmp_doc_files)
+        doc_id = dd.read_csv(tmp_doc_files)
 
         tmp_dtm_files = os.path.join(data_dir, "tmp_DTDF_*.csv")
         dtm_df = dd.read_csv(tmp_dtm_files)
@@ -757,56 +758,61 @@ class DTDFBuilder(object):
         dtm_df = dtm_df[["doc_id", "term_id", "count"]]
 
         # get correct doc id
-        doc_df["new_doc_id"] = 1
-        doc_df["new_doc_id"] = doc_df["new_doc_id"].cumsum() - 1
+        doc_id["new_doc_id"] = 1
+        doc_id["new_doc_id"] = doc_id["new_doc_id"].cumsum() - 1
 
         # get DTM dimensions
-#        D = len(doc_df)
         P = term_id.shape[0]
 
         delayed_dtm_df = dtm_df.to_delayed()
-        delayed_doc_df = doc_df.to_delayed()
+        delayed_doc_id = doc_id.to_delayed()
 
-        def zip_mapper(dtm_df_i, doc_df_i):
+        def zip_mapper(dtm_i, doc_i):
 
-            doc_df_i.index = doc_df_i["doc_id"]
-            id_dict = doc_df_i["new_doc_id"].to_dict()
-            dtm_df_i["doc_id"] =  dtm_df_i["doc_id"].map(id_dict)
-            return dtm_df_i
+            doc_i.index = doc_i["doc_id"]
+            id_dict = doc_i["new_doc_id"].to_dict()
+            dtm_i["doc_id"] =  dtm_i["doc_id"].map(id_dict)
+            return dtm_i
 
-        del_l = [delayed(zip_mapper)(dtm_df_i, doc_df_i)
-                 for dtm_df_i, doc_df_i in
-                 zip(delayed_dtm_df, delayed_doc_df)]
+        del_l = [delayed(zip_mapper)(dtm_i, doc_i)
+                 for dtm_i, doc_i in
+                 zip(delayed_dtm_df, delayed_doc_id)]
         dtm_df = dd.from_delayed(del_l)
-        doc_df["doc_id"] = doc_df["new_doc_id"]
-        doc_df = doc_df.drop("new_doc_id", axis=1)
+        doc_id["doc_id"] = doc_id["new_doc_id"]
+        doc_id = doc_id.drop("new_doc_id", axis=1)
 
-        # convert to DDTDF and write to csv
+        # convert to DTDF and write to csv
         delayed_dtm_df = dtm_df.to_delayed()
-        delayed_doc_df = doc_df.to_delayed()
+        delayed_doc_id = doc_id.to_delayed()
 
         def dtm_maker(dtm_i, doc_i):
 
             D = doc_i.shape[0]
-            doc_i = doc_i.drop("doc_id", axis=1)
-            sparse_mat = ss.coo_matrix((dtm_i["count"],
-                                        (dtm_i["doc_id"],
-                                         dtm_i["term_id"])), (D, P))
-            sparse_df = DTDF(sparse_mat)
-            sparse_df.columns = term_id["term"]
-            sparse_df.index = doc_i
-            return sparse_df
+            coords = (dtm_i["doc_id"], dtm_i["term_id"])
+            data = dtm_i["count"]
+            return(coords, data, (D, P))
 
-        del_l = [delayed(dtm_maker)(dtm_i, doc_i)
-                 for dtm_i, doc_i in zip(delayed_dtm_df, delayed_doc_df)]
-        dtm = dd.from_delayed(del_l)
-        ddtdf = DDTDF(dtm)
+        del_l = [da.from_delayed(delayed(sparse.COO)(*dtm_maker(dtm_i, doc_i)),
+                                 (doc_i.shape[0].compute(), P), int)
+                 for dtm_i, doc_i in zip(delayed_dtm_df, delayed_doc_id)]
+        dtm = da.concatenate(del_l, axis=0)
+
+        if len(dtm.chunks[0]) > 1:
+            chunks = dtm.chunks
+        else:
+            dtm = dtm.compute()
+            doc_id = doc_id.compute()
+            chunks = tuple((s,) for s in dtm.shape)
+        data = {"DTM": dtm}
+        axes = {"DTM": (0, 1)}
+        metadata = [doc_id, term_id]
+        dtdf = DTDF(data, axes, metadata=metadata, chunks=chunks)
 
         # post cleaning
 
 
         # store results
-        ddtdf.to_csv(data_dir)
+        dtdf.to_csv(data_dir)
 
         # remove tmp files
         tmp_doc_files = glob.glob(tmp_doc_files)
@@ -950,7 +956,7 @@ class DTDFBuilder(object):
             self.build_base_vocab(doc_group, data_dir, doc_type, i)
 
         del_l = [delayed(wrapper)(tup) for tup in doc_group_gen]
-        dask.compute(del_l)
+        dask.compute(*del_l)
 
 
     def clean_vocab(self, data_dir):

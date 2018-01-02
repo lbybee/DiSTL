@@ -52,16 +52,17 @@ def load_data(data_dir):
     """
 
     term_id = pd.read_csv(os.path.join(data_dir, "term_id.csv"))
-    doc_id = pd.read_csv(os.path.join(data_dir, "doc_id.csv"))
     files = os.listdir(data_dir)
     c_files = [f for f in files if "corpus" in f]
     d_files = [f for f in files if "DTDF" in f]
     if len(c_files) > 0:
+        doc_id = pd.read_csv(os.path.join(data_dir, "doc_id.csv"))
         corpus = dd.read_csv(os.path.join(data_dir, "corpus_*.csv"),
                              header=None,
                              names=["doc_id", "term_id", "count"]).compute()
         term_id.columns = ["term", "term_id"]
     else:
+        doc_id = dd.read_csv(os.path.join(data_dir, "doc_id_*.csv")).compute()
         corpus = dd.read_csv(os.path.join(data_dir, "DTDF_*.csv")).compute()
 
     return term_id, doc_id, corpus
@@ -108,9 +109,9 @@ def test_df_comp(tup_old, tup_new):
     assert_array_equal(doc_id_new.columns, doc_id_old.columns)
 
     # confirm same index
-    doc_id_new = doc_id_new.sort_index()
-    doc_id_old = doc_id_old.sort_index()
-    assert_array_equal(doc_id_new.index.values, doc_id_old.index.values)
+    doc_id_new = doc_id_new.sort_values("doc_id")
+    doc_id_old = doc_id_old.sort_values("doc_id")
+    assert_array_equal(doc_id_new["doc_id"], doc_id_old["doc_id"])
 
 
     # compare counts

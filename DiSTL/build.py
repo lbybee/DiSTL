@@ -128,8 +128,7 @@ def make_DTDF(source, DTDF_dir, inp_DTDFBuilder=None, source_type="csv",
     ----------
     source : multiple
         argument passed to _gen_docs_<source_type>, dependings on
-        source_type.
-        location where source files are stored
+        source_type.  location where source files are stored
     DTDF_dir : str
         location where DTDF files should be stored
     inp_DTDFBuilder : multiple
@@ -804,9 +803,9 @@ class DTDFBuilder(object):
             doc_id = doc_id.compute()
             chunks = tuple((s,) for s in dtm.shape)
         data = {"DTM": dtm}
-        axes = {"DTM": (0, 1)}
-        metadata = [doc_id, term_id]
-        dtdf = DTDF(data, axes, metadata=metadata, chunks=chunks)
+        data_caxes = {"DTM": (0, 1)}
+        metadata = (doc_id, term_id)
+        dtdf = DTDF(data, data_caxes, metadata=metadata, chunks=chunks)
 
         # post cleaning
 

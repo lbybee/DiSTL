@@ -12,7 +12,7 @@ Function for building instance of DTDF from source files.
 """
 
 from dask import delayed
-from dataframe import BDF
+from dataframe import BACDF
 import dask.dataframe as dd
 import dask.array as da
 import pandas as pd
@@ -26,22 +26,22 @@ import os
 # 1. DTDF Class #
 # ------------- #
 
-class DTDF(BDF):
+class DTDF(BACDF):
     """
     class for document term data-frame
 
     Parameters
     ----------
-    See BDF
+    See BACDF
 
     Attributes
     ----------
-    See BDF
+    See BACDF
     """
 
     def __init__(self, *args, **kwds):
 
-        BDF.__init__(self, *args, **kwds)
+        BACDF.__init__(self, *args, **kwds)
 
 
     def idf(self):
@@ -286,6 +286,6 @@ def loadDTDF(data_dir, distributed=0):
     else:
         chunks = dtm.chunks
     data = {"DTM": dtm}
-    axes = {"DTM": (0, 1)}
-    metadata = [doc_id, term_id]
-    return DTDF(data, axes, metadata=metadata, chunks=chunks)
+    data_caxes = {"DTM": (0, 1)}
+    metadata = (doc_id, term_id)
+    return DTDF(data, data_caxes, metadata=metadata, chunks=chunks)

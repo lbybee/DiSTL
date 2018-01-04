@@ -3,8 +3,35 @@ Includes the class for the BACDF (Base Array Collection Data-Frame),
 this wraps multiple distributed and united ndarrays as well as
 accompanying metadata. DTDF is build on this class
 """
+import dask.dataframe as dd
+import dask.array as da
 import pandas as pd
 import numpy as np
+
+def _to_indicator(data_axes_map):
+    """converts the dictionary representation
+    of a data_axes_map to the indicator matrix
+    representation."""
+
+    ddim = len(data_axes_map)
+    ndim = max([max(data_axes_map[k]) for k in data_axes_map]) + 1
+    ndata_axes_map = pd.DataFrame(np.zeros((ndim, ddim)),
+                                  columns=data_axes_map.keys())
+    for col in data_axes_map:
+        ndata_axes_map.loc[data_axes_map[col],col] = 1
+    return ndata_axes_map
+
+
+def _to_dict(data_axes_map):
+    """converts the indicator matrix representation
+    of a data_axes_map to the dictionary representation."""
+
+    ndata_axes_map = {}
+    for col in data_axes_map.columns:
+        axes = data_axes_map[col]
+        axes = axes[axes == 1]
+        ndata_axes_map[col] = axes.index.tolist()
+    return ndata_axes_map
 
 
 class BACDF(object):
@@ -14,267 +41,211 @@ class BACDF(object):
     Parameters
     ----------
     data : dict-like
-        each element corresponds to an ndarray
-    data_caxes : dict-like
-        each element corresponds to a tuple, this tuples
-        corresponds to the collection axes on which the
-        corresponding data ndarray exists
-    metadata : None or tuple
-        see attributes
-    chunks : None or tuple
-        see attributes
+        dictionary mapping data labels to dask arrays,
+        the data keys correspond to the columns in
+        data_axes_map.  If an element of data is not
+        a dask array, it will be converted to one
+        with only one chunk.
+    data_axes_map : dict-like
+        dictionary mapping data labels to corresponding
+        axes.  Each element (which corresponds to a
+        data set/label) should be a list/tuple containing
+        a scalar corresponding to a collection axis.
+    metadata : dict-like
+        dictionary mapping collection axes to metadata,
+        the metadata keys should correspond to rows
+        in data_axes_map.  If an element of metadata
+        is not a dask DataFrame it will be converted
+        to one with only one partition.
 
     Attributes
     ----------
     data : dict-like
-        each element corresponds to an ndarray
-    caxes_caxes_map : pandas DataFrame
-        indicator matrix corresponding to links between
-        collection axes.
-    caxes_data_map : pandas DataFrame
+        dictionary mapping data labels to dask arrays,
+        the data keys correspond to the columns in
+        data_axes_map.
+    data_axes_map : pandas DataFrame
         indicator matrix where columns correspond to
         data labels, and rows correspond to collection
         axes.  If true, the corresponding column exists
         on the corresponding collection axis.
-    caxes_daxes_map : pandas DataFrame
-        columns correspond to data labels and rows correspond
-        to collection axes.  The values represent the underlying
-        data axis for each collection axis, data label pair.
-    metadata : tuple
-        tuple of metadata, each element should be a pandas
-        DataFrame or None.  Should be length ndim
-    ndim : scalar
-        number of collection axes
-    ddim : scalar
-        number of data sets
-    dlabels : tuple
-        tuple of data labels
-    shape : tuple
-        length of each collection axis, should be ndim length
-    chunks : tuple
-        size of blocks, should be ndim length, if len(chunks[i]) > 1
-        that collection axis is assumed to be distributed (dask array),
-        each chunks[i] should be a tuple itself
-    data_caxes : dict-like
-        data_caxes used to build BACDF, kept incase we want to
-        update data values
+    metadata : dict-like
+        dictionary mapping collection axes to metadata,
+        the metadata keys should correspond to rows
+        in data_axes_map.  Note each element should be
+        a dask DataFrame.
     """
 
-    def __init__(self, data, data_caxes, metadata=None, chunks=None):
+    def __init__(self, data, data_axes_map, metadata):
 
-        self = self.__add_data(data, data_caxes, metadata, chunks)
+        # data
+        if not isinstance(data, dict):
+            raise ValueError("Non-dict data currently not supported")
+        data = {k: da.from_array(data[k], chunks=data[k].shape)
+                if not isinstance(data[k], da.Array)
+                else data[k] for k in data}
 
+        # data_axes_map
+        if not isinstance(data_axes_map, dict):
+            raise ValueError("Non-dict data_axes_map currently not supported")
+        data_axes_map = _to_indicator(data_axes_map)
 
-    def __add_data(self, data, data_caxes, metadata, chunks):
-        """adds data to a BACDF.  NOTE, this is a private method,
-        it is called by __init__ as well as any methods which update
-        the internal data
+        # metadata
+        if not isinstance(metadata, dict):
+            raise ValueError("Non-dict data currently not supported")
+        metadata = {k: dd.from_pandas(metadata[k], npartitions=1)
+                    if not isinstance(metadata[k], dd.DataFrame)
+                    else metadata[k] for k in metadata}
 
-        Parameters
-        ----------
-        data : dict-like
-            each element corresponds to an ndarray
-        data_caxes : dict-like
-            each element corresponds to a tuple, this tuples
-            corresponds to the collection axes on which the
-            corresponding data ndarray exists
-        metadata : None or tuple
-            see attributes
-        chunks : None or tuple
-            see attributes
+        # confirm that dimensions align
+        if len(data) != len(data_axes_map.columns):
+            raise ValueError("data does not align with data_axes_map")
+        if len(metadata) != len(data_axes_map.index):
+            raise ValueError("metadata does not align with data_axes_map")
 
-        Returns
-        -------
-        updated version of BACDF
-        """
-
-        # prep ndim and metadata
-        ndim = max([max(data_caxes[k]) for k in data_caxes]) + 1
-
-        if metadata is None:
-            metadata = tuple(None for i in range(ndim))
-
-        if ndim != len(metadata):
-            raise ValueError("metadata length does not match ndim")
-
-        # prep ddim dlabels
-        dlabels = tuple(data.keys())
-        ddim = len(dlabels)
-
-        # check data and data_caxes align
-        if len(data) != len(data_caxes):
-            raise ValueError("data and data_caxes must be same size")
-
-        d_k_set = set(data.keys())
-        a_k_set = set(data_caxes.keys())
-        if d_k_set != a_k_set:
-            raise ValueError("data and data_caxes dont share key set")
-
-        # set up shape and axis maps
-        shape = {}
-        caxes_daxes_map = np.empty((ndim, ddim))
-        caxes_daxes_map[:] = np.nan
-        caxes_data_map = np.zeros((ndim, ddim))
-        for i, k in enumerate(d_k_set):
-            t_data_s = data[k].shape
-            t_data_d = [i for i in range(len(t_data_s))]
-            t_caxes = data_caxes[k]
-            if len(t_data_s) != len(t_caxes):
-                raise ValueError("data and data_caxes %s dont share dim" % k)
-            else:
-                caxes_daxes_map[t_caxes,i] = t_data_d
-                caxes_data_map[t_caxes,i] = 1
-                for s, a in zip(t_data_s, t_caxes):
-                    if a not in shape:
-                        shape[a] = s
-                    elif shape[a] != s:
-                        raise ValueError("data shapes dont align for %s" % k)
-        shape = tuple(shape[k] for k in range(len(shape)))
-
-        caxes_caxes_map = np.eye(ndim)
-        for i in range(ndim):
-            s_map = caxes_data_map[:,caxes_data_map[i,:] == 1]
-            s_map = s_map.sum(axis=1)
-            s_map = np.where(s_map > 0)[0]
-            caxes_caxes_map[i,s_map] = 1
-            caxes_caxes_map[s_map,i] = 1
-
-        caxes_data_map = pd.DataFrame(caxes_data_map, columns=dlabels)
-        caxes_daxes_map = pd.DataFrame(caxes_daxes_map, columns=dlabels)
-        caxes_caxes_map = pd.DataFrame(caxes_caxes_map)
-
-        # set up chunks
-        if chunks is None:
-            chunks = tuple((s,) for s in shape)
-
-        if len(chunks) != len(shape):
-            raise ValueError("chunks must be same length as shape")
-
-        self.data = data
-        self.caxes_caxes_map = caxes_caxes_map
-        self.caxes_data_map = caxes_data_map
-        self.caxes_daxes_map = caxes_daxes_map
-        self.metadata = metadata
-        self.ndim = ndim
-        self.ddim = ddim
-        self.dlabels = dlabels
-        self.shape = shape
-        self.chunks = chunks
-        self.data_caxes = data_caxes
-        return self
+        self = self.__consistency_check(data, data_axes_map, metadata)
 
 
-    def update_data(data, data_caxes, metadata=None, chunks=None):
-        """links additional arrays to the collection.  Returns
-        an updated version of the BACDF.  NOTE that when updating
-        metadata or chunks we assume that these are ordered
-        by the new axes.
+    def __consistency_check(self, data, data_axes_map, metadata):
+        """determines that all the data/metadata aligns before
+        returning a BACDF.  If there is information out of sync
+        raises errors explaining where the problem lies.
 
         Parameters
         ----------
         data : dict-like
-            each element corresponds to an ndarray
-        data_caxes : dict-like
-            each element corresponds to a tuple, this tuples
-            corresponds to the collection axes on which the
-            corresponding data ndarray exists
-        metadata : None or tuple
-            see attributes
-        chunks : None or tuple
-            see attributes
+            dictionary mapping data labels to ndarrays,
+            the data keys correspond to the columns in
+            data_axes_map.
+        data_axes_map : pandas DataFrame
+            indicator matrix where columns correspond to
+            data labels, and rows correspond to collection
+            axes.  If true, the corresponding column exists
+            on the corresponding collection axis.
+        metadata : dict-like
+            dictionary mapping collection axes to metadata,
+            the metadata keys should correspond to rows
+            in data_axes_map.
 
         Returns
         -------
-        updated version of BACDF
+        BACDF
         """
 
-        # TODO cut down on duplicate operations
+        data_chunks = {k: data[k].chunks for k in data}
+        metadata_chunks = {k: (tuple(metadata[k].map_partitions(len).compute()),
+                               len(metadata[k].columns)) for k in metadata}
 
-        # confirms that new axes are added
-        ndim = max([max(data_caxes[k]) for k in data_caxes]) + 1
-        if not ndim > self.ndim:
-            raise ValueError("New axes must be added as part of update")
+        failure_mat = data_axes_map.copy()
+        failure_mat[:] = 0
+        for k in data_chunks:
+            caxes = data_axes_map[k]
+            caxes = caxes[caxes > 0].index.tolist()
+            for chunk_d, caxis in zip(data_chunks[k], caxes):
+                if chunk_d != metadata_chunks[caxis][0]:
+                    failure_mat[caxis,k] = 1
 
-        # check data and data_caxes align
-        if len(data) != len(data_caxes):
-            raise ValueError("data and data_caxes must be same size")
+        if failure_mat.sum().sum() != 0:
+            error_msg = "Not all data and metadata chunks align\n\n"
+            for k in failre_mat.columns:
+                caxes = failure_map[k]
+                caxes = caxes[caxes > 0].index.tolist()
+                for a in caxes:
+                    error_msg += "%s and %d chunks don't align\n" % (k, a)
+            raise ValueError(error_msg)
 
-        d_k_set = set(data.keys())
-        a_k_set = set(data_caxes.keys())
-        if d_k_set != a_k_set:
-            raise ValueError("data and data_caxes dont share key set")
-
-        # update metadata
-        if metadata is None:
-            metadata = tuple(None for i in range(ndim - self.ndim))
-        metadata = self.metadata + metadata
-
-        if ndim != len(metadata):
-            raise ValueError("metadata length does not match ndim")
-
-        # update chunks, we only need to get the shape of the new
-        # data if the chunks aren't provided
-        if chunks is None:
-
-            shape = {}
-            for i, k in enumerate(d_k_set):
-                t_data_s = data[k].shape
-                t_caxes = data_caxes[k]
-                if len(t_data_s) != len(t_caxes):
-                    raise ValueError("data and data_caxes %s dont share dim" % k)
-                else:
-                    for s, a in zip(t_data_s, t_caxes):
-                        if a not in shape:
-                            shape[a] = s
-                        elif shape[a] != s:
-                            raise ValueError("data shapes dont align for %s" % k)
-            shape = tuple(shape[k] for k in range(len(shape)))
-            chunks = tuple((s,) for s in shape)
-
-        chunks = self.chunks + chunks
-
-        # update data and data_caxes to combine new and old data
-        ndata = self.data
-        ndata.update(data)
-
-        ndata_caxes = self.data_caxes
-        ndata_caxes.update(data_caxes)
-
-        return self.__add_data(ndata, ndata_caxes, metadata, chunks)
+        else:
+            self.data = data
+            self.metadata = metadata
+            self.data_axes_map = data_axes_map
+            return self
 
 
-    def update_metadata(self, new_metadata, metadata_axes, overwrite=False):
-        """updates the metadata with the new_metadata entries
+    def update(self, data=None, data_axes_map=None, metadata=None):
+        """updates a BACDF with the provided values
 
         Parameters
         ----------
-        new_metadata : iterable
-            additional metadata to add
-        metadata_axes : iterable
-            corresponding axes for each metadata entry, each element should
-            be a scalar
-        overwrite : bool or scalar
-            indicator for whether to overwrite current metadata if not
-            None
+        data : dict-like
+            dictionary mapping data labels to ndarrays,
+            the data keys correspond to the columns in
+            data_axes_map.
+        data_axes_map : pandas DataFrame
+            indicator matrix where columns correspond to
+            data labels, and rows correspond to collection
+            axes.  If true, the corresponding column exists
+            on the corresponding collection axis.
+        metadata : dict-like
+            dictionary mapping collection axes to metadata,
+            the metadata keys should correspond to rows
+            in data_axes_map.
 
         Returns
         -------
         updated BACDF
         """
 
-        metadata = self.metadata
-        axes = tuple(i for i in range(self.ndim))
-        nmetadata = []
-        for a in axes:
-            if a in metadata_axes:
-                if metadata[a] is None or overwrite:
-                    nmetadata.append(new_metadata[a])
-                else:
-                    raise ValueError("can't replace non-None metadata")
-            else:
-                nmetadata.append(metadata[a])
-        self.metadata = tuple(nmetadata)
-        return self
+        if data is None:
+            data = {}
+        if data_axes_map is None:
+            data_axes_map = {}
+        if metadata is None:
+            metadata = {}
+
+        # data
+        if not isinstance(data, dict):
+            raise ValueError("Non-dict data currently not supported")
+        ndata = self.data
+        ndata.update(data)
+        ndata = {k: da.from_array(ndata[k], chunks=ndata[k].shape)
+                 if not isinstance(ndata[k], da.Array)
+                 else ndata[k] for k in ndata}
+
+        # data_axes_map
+        if not isinstance(data_axes_map, dict):
+            raise ValueError("Non-dict data_axes_map currently not supported")
+        ndata_axes_map = _to_dict(self.data_axes_map)
+        ndata_axes_map.update(data_axes_map)
+        ndata_axes_map = _to_indicator(ndata_axes_map)
+
+        # metadata
+        if not isinstance(metadata, dict):
+            raise ValueError("Non-dict data currently not supported")
+        nmetadata = self.metadata
+        nmetadata.update(metadata)
+        nmetadata = {k: dd.from_pandas(nmetadata[k], npartitions=1)
+                     if not isinstance(nmetadata[k], dd.DataFrame)
+                     else nmetadata[k] for k in nmetadata}
+
+        # confirm that dimensions align
+        if len(ndata) != len(ndata_axes_map.columns):
+            raise ValueError("data does not align with data_axes_map")
+        if len(nmetadata) != len(ndata_axes_map.index):
+            raise ValueError("metadata does not align with data_axes_map")
+
+        return self.__consistency_check(ndata, ndata_axes_map, nmetadata)
+
+
+    @property
+    def ndim(self):
+
+        return len(self.metadata)
+
+    @property
+    def ddim(self):
+
+        return len(self.data)
+
+    @property
+    def shape(self):
+
+        return tuple(len(self.metadata[k]) for k in self.metadata)
+
+    @property
+    def chunks(self):
+
+        return tuple(tuple(self.metadata[k].map_partitions(len).compute())
+                     for k in self.metadata)
 
 
     def update_from_pandas(self):
@@ -287,7 +258,7 @@ class BACDF(object):
         return NotImplementedError
 
 
-    def rechunk(self):
+    def rechunk(self, axis=0):
 
         return NotImplementedError
 
@@ -300,6 +271,47 @@ class BACDF(object):
     def to_csv(self):
 
         return NotImplementedError
+
+
+    def sum(self, axis, label=None):
+        """returns an updated version of the BACDF summed
+        over the given axis, if label is given this operation
+        is only applied to the labeled array, and the axes
+        info is updated to represent the change
+
+        Parameters
+        ----------
+        axis : scalar
+            axis over which to sum
+        label : str
+            data key for array
+
+        Returns
+        -------
+        summed BACDF
+        """
+
+        # build labels and underlying daxes to iterate over
+        # and sum
+        if label is None:
+            data_map = self.caxes_data_map.iloc[axis,:]
+            daxes_map = self.caxes_daxes_map.iloc[axis,:]
+            ind = data_map == 1
+            data_map = data_map[ind]
+            daxes_map = daxes_map[ind]
+            labels = data_map.index.values
+            daxes = daxes_map.values
+        else:
+            labels = [label]
+            daxes = [self.caxes_daxes_map.loc[axis,label]]
+
+        # apply sum operation
+        for l, da in zip(labels, daxes):
+            self.data[l] = self.data[l].sum(axis=da)
+            self.caxes_data_map.loc[axis,l] = 0
+            self.caxes_daxes_map.loc[axis,l] = np.nan
+
+        return self
 
 
     def agg(self):

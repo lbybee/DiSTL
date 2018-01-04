@@ -128,7 +128,7 @@ def make_DTDF(source, DTDF_dir, inp_DTDFBuilder=None, source_type="csv",
     ----------
     source : multiple
         argument passed to _gen_docs_<source_type>, dependings on
-        source_type.  location where source files are stored
+        source_type.
     DTDF_dir : str
         location where DTDF files should be stored
     inp_DTDFBuilder : multiple
@@ -796,16 +796,10 @@ class DTDFBuilder(object):
                  for dtm_i, doc_i in zip(delayed_dtm_df, delayed_doc_id)]
         dtm = da.concatenate(del_l, axis=0)
 
-        if len(dtm.chunks[0]) > 1:
-            chunks = dtm.chunks
-        else:
-            dtm = dtm.compute()
-            doc_id = doc_id.compute()
-            chunks = tuple((s,) for s in dtm.shape)
         data = {"DTM": dtm}
-        data_caxes = {"DTM": (0, 1)}
-        metadata = (doc_id, term_id)
-        dtdf = DTDF(data, data_caxes, metadata=metadata, chunks=chunks)
+        data_axes_map = {"DTM": (0, 1)}
+        metadata = {0: doc_id, 1: term_id}
+        dtdf = DTDF(data, data_axes_map, metadata)
 
         # post cleaning
 

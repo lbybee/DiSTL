@@ -197,7 +197,7 @@ class DTDF(BACDF):
         """
 
         # term id
-        term_id = self.metadata[1]
+        term_id = self.metadata[1].compute()
         term_id.to_csv(os.path.join(data_dir, "term_id.csv"), index=False)
 
         # doc id
@@ -206,33 +206,22 @@ class DTDF(BACDF):
         # DTM
         dtm = self.data["DTM"]
 
-        # write doc id and dtm, if the data is a dask array we write
-        # one doc_id and DTDF file for each chunk/partition
-        if len(self.chunks[0]) > 1:
+        delayed_doc = doc_id.to_delayed()
+        delayed_dtm = dtm.to_delayed().flatten()
 
-            delayed_doc = doc_id.to_delayed()
-            delayed_dtm = dtm.to_delayed().flatten()
+        def writer(dtm_i, doc_i, i):
+            doc_i.to_csv(os.path.join(data_dir, "doc_id_%d.csv" % i),
+                         index=False)
+            dtm_df = pd.DataFrame({"doc_id": dtm_i.coords[0],
+                                   "term_id": dtm_i.coords[1],
+                                   "count": dtm_i.data})
+            dtm_df.to_csv(os.path.join(data_dir, "DTDF_%d.csv" % i),
+                          index=False)
 
-            def writer(dtm_i, doc_i, i):
-                doc_i.to_csv(os.path.join(data_dir, "doc_id_%d.csv" % i),
-                             index=False)
-                dtm_df = pd.DataFrame({"doc_id": dtm_i.coords[0],
-                                       "term_id": dtm_i.coords[1],
-                                       "count": dtm_i.data})
-                dtm_df.to_csv(os.path.join(data_dir, "DTDF_%d.csv" % i),
-                              index=False)
-
-            del_l = [delayed(writer)(dtm_i, doc_i, i) for dtm_i, doc_i, i
-                     in zip(delayed_dtm, delayed_doc,
-                            range(len(delayed_dtm)))]
-            dask.compute(*del_l)
-
-        else:
-            doc_id.to_csv(os.path.join(data_dir, "doc_id_0.csv"), index=False)
-            dtm_df = pd.DataFrame({"doc_id": dtm.coords[0],
-                                   "term_id": dtm.coords[1],
-                                   "count": dtm.data})
-            dtm_df.to_csv(os.path.join(data_dir, "DTDF_0.csv"), index=False)
+        del_l = [delayed(writer)(dtm_i, doc_i, i) for dtm_i, doc_i, i
+                 in zip(delayed_dtm, delayed_doc,
+                        range(len(delayed_dtm)))]
+        dask.compute(*del_l)
 
 
 # ---------------- #

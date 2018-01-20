@@ -12,7 +12,7 @@ Function for building instance of DTDF from source files.
 """
 
 from dask import delayed
-from dataframe import BACDF
+from DiSTL.dataframe import BACDF
 import dask.dataframe as dd
 import dask.array as da
 import pandas as pd

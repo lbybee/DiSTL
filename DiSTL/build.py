@@ -18,12 +18,14 @@ clean a DTDF from source files, as well as the methods needed to
 build/clean the DTDF.  These methods will be called within make_DTDF.
 """
 from pymongo import MongoClient
+from datetime import datetime
 from dask import delayed
-from core import DTDF
+from DiSTL.core import DTDF
 import dask.dataframe as dd
 import dask.array as da
 import pandas as pd
 import numpy as np
+import logging
 import sparse
 import dask
 import glob
@@ -192,18 +194,19 @@ def make_DTDF(source, DTDF_dir, inp_DTDFBuilder=None, source_type="csv",
     else:
         raise ValueError("Unsupported type for inp_DTDFBuilder")
 
-    # build vocab
+    # build vocab if needed
+    if inst_DTDFBuilder.pre_vocab:
 
-    # get document generator
-    if source_type == "csv":
-        doc_group_gen = _gen_docs_csv(source, **gen_kwds)
-    elif source_type == "mongodb":
-        doc_group_gen = _gen_docs_mongodb(source, **gen_kwds)
-    else:
-        raise ValueError("Unsupported source_type %s" % source_type)
-    # activate generator
-    inst_DTDFBuilder.build_vocab(doc_group_gen, DTDF_dir, **vocab_kwds)
-    inst_DTDFBuilder.clean_vocab(DTDF_dir)
+        # get document generator
+        if source_type == "csv":
+            doc_group_gen = _gen_docs_csv(source, **gen_kwds)
+        elif source_type == "mongodb":
+            doc_group_gen = _gen_docs_mongodb(source, **gen_kwds)
+        else:
+            raise ValueError("Unsupported source_type %s" % source_type)
+        # activate generator
+        inst_DTDFBuilder.build_vocab(doc_group_gen, DTDF_dir, **vocab_kwds)
+        inst_DTDFBuilder.clean_vocab(DTDF_dir)
 
     # build DTDF
 
@@ -244,10 +247,9 @@ def _default_parser(doc):
     return regex.findall(text_string)
 
 
-def _pre_tokenizer(doc):
-    """special case of tokenizer when there is
-    no vocab_dict (generally used for generating
-    vocab_dict).
+def _unigrams_nvocab_tokenizer(doc):
+    """special case of tokenizer for unigrams
+    where vocab_dict isn't supplied.
 
     Parameters
     ----------
@@ -296,6 +298,41 @@ def _unigrams_tokenizer(doc, vocab_dict):
                 n_doc[term] += 1
         except:
             continue
+
+    return n_doc
+
+
+def _ngrams_nvocab_tokenizer(doc, n_grams):
+    """converts list of terms into dict of token counts,
+    for the n-gram case without vocab_dict.
+
+    Parameters
+    ----------
+    doc : list
+        list of terms
+    n_grams : scalar
+        token word count, e.g. n_grams == 1: unigrams
+        n_grams == 2: bigrams
+
+    Returns
+    -------
+    dictionary of token counts
+    """
+
+    n_doc = {}
+
+    for d_ind in range(len(doc) + 1 - n_grams):
+
+        # generate cleaned terms conditional on vocab_dict
+        t_doc = doc[d_ind:d_ind+n_grams]
+
+        # generate the token and add to dict
+        if len(t_doc) == n_grams:
+            term = " ".join(t_doc)
+            if term not in n_doc:
+                n_doc[term] = 1
+            else:
+                n_doc[term] += 1
 
     return n_doc
 
@@ -351,7 +388,7 @@ def _tokenizer(doc, vocab_dict, n_grams, mult_grams):
     ----------
     doc : list
         list of terms
-    vocab_dict : dict-like
+    vocab_dict : dict-like or None
         map from unique term to clean unique term
     n_grams : scalar
         token word count, e.g. n_grams == 1: unigrams
@@ -367,13 +404,22 @@ def _tokenizer(doc, vocab_dict, n_grams, mult_grams):
     """
 
     if n_grams == 1:
-        return _unigrams_tokenizer(doc, vocab_dict)
+        if vocab_dict is None:
+            return _unigrams_nvocab_tokenizer(doc)
+        else:
+            return _unigrams_tokenizer(doc, vocab_dict)
 
     if n_grams > 1 and mult_grams == 0:
-        return _ngrams_tokenizer(doc, vocab_dict, n_grams)
+        if vocab_dict is None:
+            return _ngrams_nvocab_tokenizer(doc, n_grams)
+        else:
+            return _ngrams_tokenizer(doc, vocab_dict, n_grams)
 
     if n_grams > 1 and mult_grams == 1:
-        n_doc = _ngrams_tokenizer(doc, vocab_dict, n_grams)
+        if vocab_dict is None:
+            n_doc = _ngrams_nvocab_tokenizer(doc, n_grams)
+        else:
+            n_doc = _ngrams_tokenizer(doc, vocab_dict, n_grams)
         n_doc.update(_tokenizer(doc, vocab_dict, n_grams-1, mult_grams))
         return n_doc
 
@@ -529,20 +575,48 @@ class DTDFBuilder(object):
         minimum length required for term
     agg_group : groups
         cols/index elements to groupby and sum
+    log_path : None or file-path
+        If log_path is not None, the runtime is logged for each
+        step.
+
+    Attributes
+    ----------
+    str_parser : function/method
+        see params
+    n_grams : scalar
+        see params
+    mult_grams : scalar or bool
+        see params
+    stop_words : list or None
+        see params
+    regex_stop_words : list or None
+        see params
+    stemmer : function or None
+        see params
+    <pre|post>_doc_<lthresh|uthresh> : scalar
+        see params
+    <pre|post>_tfidf_thresh : scalar
+        see params
+    <pre|post>_term_length : scalar
+        see params
+    agg_group : groups
+        see params
+    pre_vocab : bool
+        indicator for whether pre-vocab should be generated
+    logger : None or logging instance
+        If not None contains logging info
     """
 
     def __init__(self, str_parser=_default_parser, n_grams=1, mult_grams=0,
                  stop_words=None, regex_stop_words=None, stemmer=None,
                  pre_doc_lthresh=0., pre_doc_uthresh=1.,
                  pre_tfidf_thresh=0., pre_term_length=0,
-                 post_doc_lthresh=0., post_doc_uthresh=0.,
+                 post_doc_lthresh=0., post_doc_uthresh=1.,
                  post_tfidf_thresh=0., post_term_length=0,
-                 agg_group=None):
+                 agg_group=None, log_path=None):
 
         # TODO Logging
-        # TODO Missing vocab_dict
         # TODO Compression for data files
-        # TODO post DTDF cleaning (thresholding/agg_group)
         # TODO clean stemmers
         # TODO return DF instead of storing temp files first
         # TODO Improve runtime
@@ -561,11 +635,27 @@ class DTDFBuilder(object):
         self.pre_doc_lthresh=pre_doc_lthresh
         self.pre_doc_uthresh=pre_doc_uthresh
         self.pre_tfidf_thresh=pre_tfidf_thresh
+        if (stop_words is not None or regex_stop_words is not None or
+            stemmer is not None or pre_doc_lthresh > 0. or
+            pre_doc_uthresh < 1. or pre_ttfidf_thresh > 0. or
+            pre_term_length > 0):
+            self.pre_vocab = True
+        else:
+            self.pre_vocab = False
         self.pre_term_length=pre_term_length
         self.post_doc_lthresh=post_doc_lthresh
         self.post_doc_uthresh=post_doc_uthresh
         self.post_tfidf_thresh=post_tfidf_thresh
         self.post_term_length=post_term_length
+        if log_path is not None:
+            logging.basicConfig(stream=sys.stdout,
+                                level=logging.INFO,
+                                format="%(asctime)s %(levelname)s %(message)s",
+                                datefmt="%Y-%m-%dT%H:%M:%S",
+                                filename=log_path)
+            self.logger = logging
+        else:
+            self.logger = None
 
 
     def build_base_DTDF(self, doc_group, data_dir, doc_type="str", mnum=0):
@@ -609,14 +699,19 @@ class DTDFBuilder(object):
         None, resulting pandas DataFrame is stored to data_dir
         """
 
-        # load the vocab dict to map clean terms
-        vocab_dict_file = os.path.join(data_dir, "vocab_dict.csv")
-        if not os.path.isfile(vocab_dict_file):
-            raise FileNotFoundError("vocab_dict.csv")
-        vocab_dict = pd.read_csv(vocab_dict_file)
-        vocab_dict.index = vocab_dict["term"]
-        vocab_dict = vocab_dict["stem"]
-        vocab_dict = vocab_dict.to_dict()
+        t0 = datetime.now()
+
+        if self.pre_vocab:
+            # load the vocab dict to map clean terms
+            vocab_dict_file = os.path.join(data_dir, "vocab_dict.csv")
+            if not os.path.isfile(vocab_dict_file):
+                raise FileNotFoundError("vocab_dict.csv")
+            vocab_dict = pd.read_csv(vocab_dict_file)
+            vocab_dict.index = vocab_dict["term"]
+            vocab_dict = vocab_dict["stem"]
+            vocab_dict = vocab_dict.to_dict()
+        else:
+            vocab_dict = None
 
         # set up doc_builder based on doc_type
         if doc_type == "str":
@@ -634,8 +729,12 @@ class DTDFBuilder(object):
 
         elif doc_type == "dict":
 
-            def doc_builder(doc, vocab_dict):
-                return _token_vocab_map(doc, vocab_dict)
+            if vocab_dict is not None:
+                def doc_builder(doc, vocab_dict):
+                    return _token_vocab_map(doc, vocab_dict)
+            else:
+                def doc_builder(doc, vocab_dict):
+                    return doc
 
         else:
 
@@ -685,6 +784,10 @@ class DTDFBuilder(object):
         f_name = os.path.join(data_dir, "tmp_DTDF_%d.csv" % mnum)
         dtm_df.to_csv(f_name, index=False)
 
+        if self.logger is not None:
+            self.logger.info("%s %d %s" % ("DTDF base", mnum,
+                                           str(datetime.now() - t0)))
+
 
     def build_DTDF(self, doc_group_gen, data_dir, doc_type="str"):
         """
@@ -713,12 +816,17 @@ class DTDFBuilder(object):
         None, resulting data is stored in data_dir
         """
 
+        t0 = datetime.now()
         def wrapper(tup):
             i, doc_group = tup
             self.build_base_DTDF(doc_group, data_dir, doc_type, i)
 
         del_l = [delayed(wrapper)(tup) for tup in doc_group_gen]
-        dask.compute(*del_l)
+        dd.compute(*del_l)
+
+        if self.logger is not None:
+            self.logger.info("%s %s" % ("DTDF base full",
+                                        str(datetime.now() - t0)))
 
 
     def clean_DTDF(self, data_dir):
@@ -739,11 +847,14 @@ class DTDFBuilder(object):
         (triplet counts, doc ids and term ids)
         """
 
+        # TODO handle the blocksize issue
+
+        t0 = datetime.now()
         tmp_doc_files = os.path.join(data_dir, "tmp_doc_id_*.csv")
-        doc_id = dd.read_csv(tmp_doc_files)
+        doc_id = dd.read_csv(tmp_doc_files, blocksize=1e9)
 
         tmp_dtm_files = os.path.join(data_dir, "tmp_DTDF_*.csv")
-        dtm_df = dd.read_csv(tmp_dtm_files)
+        dtm_df = dd.read_csv(tmp_dtm_files, blocksize=1e9)
 
         # build term id
         term_id = pd.DataFrame(dtm_df["term"].unique().compute())
@@ -765,11 +876,21 @@ class DTDFBuilder(object):
 
         delayed_dtm_df = dtm_df.to_delayed()
         delayed_doc_id = doc_id.to_delayed()
+        dtm_l = len(delayed_dtm_df)
+        doc_l = len(delayed_doc_id)
+        if dtm_l != doc_l:
+            raise ValueError("delayed_dtm_df and delayed_doc_id don't share length %d %d" % (doc_l, dtm_l))
 
         def zip_mapper(dtm_i, doc_i):
 
+            # NOTE this warns you if dask didn't load all the data
+            # TODO HANDLE THIS BETTER
+            doc_s = doc_i["doc_id"].unique().shape
+            dtm_s = dtm_i["doc_id"].unique().shape
+            if doc_s != dtm_s:
+                raise ValueError("doc_id for docs and DTM don't align, %d %d" % (doc_s[0], dtm_s[0]))
             doc_i.index = doc_i["doc_id"]
-            id_dict = doc_i["new_doc_id"].to_dict()
+            id_dict = doc_i["new_doc_id"]
             dtm_i["doc_id"] =  dtm_i["doc_id"].map(id_dict)
             return dtm_i
 
@@ -780,32 +901,69 @@ class DTDFBuilder(object):
         doc_id["doc_id"] = doc_id["new_doc_id"]
         doc_id = doc_id.drop("new_doc_id", axis=1)
 
-        # convert to DTDF and write to csv
-        delayed_dtm_df = dtm_df.to_delayed()
-        delayed_doc_id = doc_id.to_delayed()
-
-        def dtm_maker(dtm_i, doc_i):
-
-            D = doc_i.shape[0]
-            coords = (dtm_i["doc_id"], dtm_i["term_id"])
-            data = dtm_i["count"]
-            return(coords, data, (D, P))
-
-        del_l = [da.from_delayed(delayed(sparse.COO)(*dtm_maker(dtm_i, doc_i)),
-                                 (doc_i.shape[0].compute(), P), int)
-                 for dtm_i, doc_i in zip(delayed_dtm_df, delayed_doc_id)]
-        dtm = da.concatenate(del_l, axis=0)
-
-        data = {"DTM": dtm}
-        data_axes_map = {"DTM": (0, 1)}
-        metadata = {0: doc_id, 1: term_id}
-        dtdf = DTDF(data, data_axes_map, metadata)
-
         # post cleaning
 
+        # doc thresholding
+        if self.post_doc_lthresh > 0 or self.post_doc_uthresh < 1:
+            D = len(doc_id)
+            lthresh = D * self.post_doc_lthresh
+            uthresh = D * self.post_doc_uthresh
+            dtm_df["doc_count"] = dtm_df["count"] > 0
+            doc_count = dtm_df.groupby("term_id")["doc_count"].sum()
+            dtm_df = dtm_df[["doc_id", "term_id", "count"]]
+            doc_count = doc_count[doc_count >= lthresh]
+            doc_count = doc_count[doc_count <= uthresh]
+            count = doc_count.compute()
+            term_id = term_id[term_id["term_id"].isin(count.index)]
+            dtm_df = dtm_df[dtm_df["term_id"].isin(count.index)]
+            term_id_map = term_id.copy()
+            term_id_map = term_id_map.reset_index()
+            term_id_map["new"] = term_id_map.index
+            term_id_map.index = term_id_map["term_id"]
+            term_id_map = term_id_map["new"]
+            term_id["term_id"] = term_id["term_id"].map(term_id_map)
+            dtm_df["term_id"] = dtm_df["term_id"].map(term_id_map)
+
+        # tfidf thresholding
+        if self.post_tfidf_thresh > 0:
+            D = len(doc_id)
+            thresh = self.post_tfidf_thresh
+            dtm_df["doc_count"] = dtm_df["count"] > 0
+            group = dtm_df.groupby("term_id")
+            doc_count = group["doc_count"].sum()
+            term_count = group["count"].sum()
+            freq = term_count / term_count.sum()
+            tfidf = freq * np.log(D / (doc_count + 1))
+            dtm_df = dtm_df[["doc_id", "term_id", "count"]]
+            tfidf = tfidf[tfidf > thresh]
+            count = tfidf.compute()
+            term_id = term_id[term_id["term_id"].isin(count.index)]
+            dtm_df = dtm_df[dtm_df["term_id"].isin(count.index)]
+            term_id_map = term_id.copy()
+            term_id_map = term_id_map.reset_index()
+            term_id_map["new"] = term_id_map.index
+            term_id_map.index = term_id_map["term_id"]
+            term_id_map = term_id_map["new"]
+            term_id["term_id"] = term_id["term_id"].map(term_id_map)
+            dtm_df["term_id"] = dtm_df["term_id"].map(term_id_map)
+
+        # term count thresholding
+        if self.post_term_length > 0:
+            fn = lambda x: len(x) >= self.post_term_length
+            term_id = term_id[term_id["term"].apply(fn)]
+            dtm_df = dtm_df[dtm_df["term_id"].isin(term_id["term_id"])]
+            term_id_map = term_id.copy()
+            term_id_map = term_id_map.reset_index()
+            term_id_map["new"] = term_id_map.index
+            term_id_map.index = term_id_map["term_id"]
+            term_id_map = term_id_map["new"]
+            term_id["term_id"] = term_id["term_id"].map(term_id_map)
+            dtm_df["term_id"] = dtm_df["term_id"].map(term_id_map)
 
         # store results
-        dtdf.to_csv(data_dir)
+        dtm_df.to_csv(os.path.join(data_dir, "DTDF_*.csv"), index=False)
+        term_id.to_csv(os.path.join(data_dir, "term_id.csv"), index=False)
+        doc_id.to_csv(os.path.join(data_dir, "doc_id_*.csv"), index=False)
 
         # remove tmp files
         tmp_doc_files = glob.glob(tmp_doc_files)
@@ -814,6 +972,10 @@ class DTDFBuilder(object):
         tmp_dtm_files = glob.glob(tmp_dtm_files)
         for f in tmp_dtm_files:
             os.remove(f)
+
+        if self.logger is not None:
+            self.logger.info("%s %s" % ("DTDF clean",
+                                        str(datetime.now() - t0)))
 
 
     def build_base_vocab(self, doc_group, data_dir, doc_type="str", mnum=0):
@@ -857,17 +1019,18 @@ class DTDFBuilder(object):
         None, resulting pandas DataFrame is stored to data_dir
         """
 
+        t0 = datetime.now()
         # set up doc_builder based on doc_type
         if doc_type == "str":
 
             def doc_builder(doc):
                 doc = self.str_parser(doc)
-                return _pre_tokenizer(doc)
+                return _unigrams_nvocab_tokenizer(doc)
 
         elif doc_type == "list":
 
             def doc_builder(doc):
-                return _pre_tokenizer(doc)
+                return _unigrams_nvocab_tokenizer(doc)
 
         elif doc_type == "dict":
 
@@ -916,6 +1079,10 @@ class DTDFBuilder(object):
         f_name = os.path.join(data_dir, "tmp_vocab_%d.csv" % mnum)
         vocab.to_csv(f_name, index=False)
 
+        if self.logger is not None:
+            self.logger.info("%s %d %s" % ("vocab base", mnum,
+                                           str(datetime.now() - t0)))
+
 
     def build_vocab(self, doc_group_gen, data_dir, doc_type="str"):
         """
@@ -944,12 +1111,17 @@ class DTDFBuilder(object):
         None, resulting data is stored in data_dir
         """
 
+        t0 = datetime.now()
         def wrapper(tup):
             i, doc_group = tup
             self.build_base_vocab(doc_group, data_dir, doc_type, i)
 
         del_l = [delayed(wrapper)(tup) for tup in doc_group_gen]
-        dask.compute(*del_l)
+        dd.compute(*del_l)
+
+        if self.logger is not None:
+            self.logger.info("%s %s" % ("vocab base full",
+                                        str(datetime.now() - t0)))
 
 
     def clean_vocab(self, data_dir):
@@ -969,6 +1141,7 @@ class DTDFBuilder(object):
         None, stores a cleaned vocab, and vocab_map to data_dir
         """
 
+        t0 = datetime.now()
         # load vocab and gen doc count
         tmp_vocab_files = glob.glob(os.path.join(data_dir, "tmp_vocab_*.csv"))
         vocab_df_l = []
@@ -1028,3 +1201,7 @@ class DTDFBuilder(object):
         # remove tmp files
         for f in tmp_vocab_files:
             os.remove(f)
+
+        if self.logger is not None:
+            self.logger.info("%s %s" % ("vocab clean",
+                                        str(datetime.now() - t0)))

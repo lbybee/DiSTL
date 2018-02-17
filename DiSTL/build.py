@@ -851,10 +851,10 @@ class DTDFBuilder(object):
 
         t0 = datetime.now()
         tmp_doc_files = os.path.join(data_dir, "tmp_doc_id_*.csv")
-        doc_id = dd.read_csv(tmp_doc_files, blocksize=1e9)
+        doc_id = dd.read_csv(tmp_doc_files, blocksize=None)
 
         tmp_dtm_files = os.path.join(data_dir, "tmp_DTDF_*.csv")
-        dtm_df = dd.read_csv(tmp_dtm_files, blocksize=1e9)
+        dtm_df = dd.read_csv(tmp_dtm_files, blocksize=None)
 
         # build term id
         term_id = pd.DataFrame(dtm_df["term"].unique().compute())

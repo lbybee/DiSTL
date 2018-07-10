@@ -30,6 +30,7 @@ import sparse
 import dask
 import glob
 import json
+import sys
 import os
 import re
 
@@ -648,8 +649,7 @@ class DTDFBuilder(object):
         self.post_tfidf_thresh=post_tfidf_thresh
         self.post_term_length=post_term_length
         if log_path is not None:
-            logging.basicConfig(stream=sys.stdout,
-                                level=logging.INFO,
+            logging.basicConfig(level=logging.INFO,
                                 format="%(asctime)s %(levelname)s %(message)s",
                                 datefmt="%Y-%m-%dT%H:%M:%S",
                                 filename=log_path)

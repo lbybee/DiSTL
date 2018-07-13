@@ -228,6 +228,10 @@ def _DTM_builder(doc_generator, term_id_map):
     return doc_id, DTM
 
 
+# ----------------------- #
+# Partition Build Wrapper #
+# ----------------------- #
+
 def _partition_handler(partition, backend, builer, backend_kwds,
                        builder_kwds, tmp_file_name_patterns,
                        log_file, log_info):
@@ -345,80 +349,9 @@ def build_wrapper(partitions, backend, builder, tmp_file_name_patterns,
             f.write("%s all %s\n" % (log_info, str(t1 - t0)))
 
 
-
-def partition_build_count(db, collection, pipeline, data_dir, log):
-    """
-    build count based on collection from database
-
-    Parameters
-    ----------
-    db : str
-        name of database
-    collection : str
-        name of collection
-    pipeline : list of dictionaries
-        aggregation pipeline
-    data_dir : str
-        location where data files are stored
-    log : bool
-        indicator for whether to record a log entry when done
-
-    Returns
-    -------
-    None
-    """
-
-    t0 = datetime.now()
-    fname = "tmp_count_%s.csv" % collection
-
-    client = MongoClient()
-    client.admin.command({"setParameter": 1, "cursorTimeoutMillis": 60000000})
-    iterator = client[db][collection].aggregate(pipeline, allowDiskUse=True)
-    df = pd.DataFrame([{"count": r["count"]} for r in iterator])
-    df.to_csv(os.path.join(data_dir, fname), index=False)
-    client.close()
-
-    if log:
-        t1 = datetime.now()
-        with open(os.path.join(data_dir, "DTM.log"), "a") as f:
-            f.write("c %s %s\n" % (collection, str(t1 - t0)))
-
-
-def build_count(db, collections, search_pipeline, count_pipeline,
-                data_dir, log=True):
-    """
-    assembles the temporary count files and then aggregates into
-    one file
-
-    Parameters
-    ----------
-    db : str
-        name of database
-    collection : iterable
-        list of collection names
-    search_pipeline : list of dictionaries
-        aggregation pipeline for searching database
-    count_pipeline : list of dictionaries
-        aggregation pipeline for counting
-    data_dir : str
-        location where data files are stored
-    log : bool
-        indicator for whether to record a log entry when done
-    """
-
-    t0 = datetime.now()
-    pipeline = search_pipeline + count_pipeline
-
-    del_l = [delayed(partition_build_count)(db, c, pipeline, data_dir, log)
-             for c in collections]
-    dask.compute(*del_l)
-
-    if log:
-        t1 = datetime.now()
-        with open(os.path.join(data_dir, "DTM.log"), "a") as f:
-            f.write("bc %s\n" % str(t1 - t0))
-
-
+# -------------------- #
+# Cleaning/Aggregation #
+# -------------------- #
 
 def clean_count(data_dir, log=True):
     """
@@ -453,79 +386,6 @@ def clean_count(data_dir, log=True):
         t1 = datetime.now()
         with open(os.path.join(data_dir, "DTM.log"), "a") as f:
             f.write("cc %s\n" % str(t1 - t0))
-
-
-
-def partition_build_vocab(db, collection, pipeline, data_dir, log):
-    """
-    build vocab based on collection from database
-
-    Parameters
-    ----------
-    db : str
-        name of database
-    collection : str
-        name of collection
-    pipeline : list of dictionaries
-        aggregation pipeline
-    data_dir : str
-        location where data files are stored
-    log : bool
-        indicator for whether to record a log entry when done
-
-    Returns
-    -------
-    None
-    """
-
-    t0 = datetime.now()
-    fname = "tmp_vocab_%s.csv" % collection
-
-    client = MongoClient()
-    client.admin.command({"setParameter": 1, "cursorTimeoutMillis": 60000000})
-    iterator = client[db][collection].aggregate(pipeline, allowDiskUse=True)
-    df = pd.DataFrame([r for r in iterator])
-    df.to_csv(os.path.join(data_dir, fname), index=False)
-    client.close()
-
-    if log:
-        t1 = datetime.now()
-        with open(os.path.join(data_dir, "DTM.log"), "a") as f:
-            f.write("v %s %s\n" % (collection, str(t1 - t0)))
-
-
-def build_vocab(db, collections, search_pipeline, vocab_pipeline,
-                data_dir, log=True):
-    """
-    assembles the temporary vocab files
-
-    Parameters
-    ----------
-    db : str
-        name of database
-    collection : iterable
-        list of collection names
-    search_pipeline : list of dictionaries
-        aggregation pipeline for searching database
-    vocab_pipeline : list of dictionaries
-        aggregation pipeline for vocab database
-    data_dir : str
-        location where data files are stored
-    log : bool
-        indicator for whether to record a log entry when done
-    """
-
-    t0 = datetime.now()
-    pipeline = search_pipeline + vocab_pipeline
-
-    del_l = [delayed(partition_build_vocab)(db, c, pipeline, data_dir, log)
-             for c in collections]
-    dask.compute(*del_l)
-
-    if log:
-        t1 = datetime.now()
-        with open(os.path.join(data_dir, "DTM.log"), "a") as f:
-            f.write("bv %s\n" % str(t1 - t0))
 
 
 def clean_vocab(data_dir, stop_words=None, regex_stop_words=None,
@@ -636,122 +496,6 @@ def clean_vocab(data_dir, stop_words=None, regex_stop_words=None,
         t1 = datetime.now()
         with open(os.path.join(data_dir, "DTM.log"), "a") as f:
             f.write("vc %s\n" % str(t1 - t0))
-
-
-def partition_build_DTM(db, collection, pipeline, data_dir, term_id_map, log):
-    """
-    build DTM based on collection from database
-
-    Parameters
-    ----------
-    db : str
-        name of database
-    collection : str
-        name of collection
-    pipeline : list of dictionaries
-        aggregation pipeline
-    data_dir : str
-        location where data files are to be stored
-    term_id_map : dict-like
-        map from raw_term -> term_id.  If a term doesn't end up in the vocab
-        it shouldn't be in this dict
-    log : bool
-        indicator for whether to record a log entry when done
-
-    Returns
-    -------
-    None
-    """
-
-    t0 = datetime.now()
-    doc_id_fname = "tmp_doc_id_%s.csv" % collection
-    DTM_fname = "tmp_DTM_%s.csv" % collection
-
-
-    client = MongoClient()
-    client.admin.command({"setParameter": 1, "cursorTimeoutMillis": 60000000})
-    iterator = client[db][collection].aggregate(pipeline, allowDiskUse=True)
-
-    doc_id_l = []
-    DTM_l = []
-
-    for doc_id, doc in enumerate(iterator):
-
-        metadata = doc["_id"]
-        metadata["doc_id"] = doc_id
-        doc_id_l.append(metadata)
-
-        term_dict_l = doc["txt"]
-        for term_dict in term_dict_l:
-            # We do try except here because it seems to be quicker
-            # than checking for the existence of a term in term_id_map
-            # first.  There may be a better way to do this...
-            term = term_dict["term"]
-            try:
-                term_id = term_id_map[term]
-                count = term_dict["count"]
-                triplet = {"term_id": term_id, "doc_id": doc_id,
-                           "count": count}
-                DTM_l.append(triplet)
-            except:
-                continue
-    doc_id = pd.DataFrame(doc_id_l)
-    doc_id.to_csv(os.path.join(data_dir, doc_id_fname), index=False)
-    DTM = pd.DataFrame(DTM_l)
-    DTM.to_csv(os.path.join(data_dir, DTM_fname), index=False)
-    client.close()
-
-    if log:
-        t1 = datetime.now()
-        with open(os.path.join(data_dir, "DTM.log"), "a") as f:
-            f.write("d %s %s\n" % (collection, str(t1 - t0)))
-
-
-def build_DTM(db, collections, search_pipeline, dtm_pipeline, data_dir,
-              log=True):
-    """
-    assembles the temporary DTM files
-
-    Parameters
-    ----------
-    db : str
-        name of database
-    collection : iterable
-        list of collection names
-    search_pipeline : list of dictionaries
-        aggregation pipeline for searching database
-    dtm_pipeline : list of dictionaries
-        aggregation pipeline for DTM database
-    data_dir : str
-        location where data files are stored
-    log : bool
-        indicator for whether to record a log entry when done
-
-    Returns
-    -------
-    None
-    """
-
-    t0 = datetime.now()
-
-    # load term_id_map (maps raw terms returned by aggregate
-    # to term id contained in the vocab
-    vocab = pd.read_csv(os.path.join(data_dir, "vocab.csv"))
-    vocab = vocab[["raw_term", "term_id"]]
-    vocab.index = vocab["raw_term"]
-    term_id_map = vocab["term_id"].to_dict()
-
-    pipeline = search_pipeline + dtm_pipeline
-
-    del_l = [delayed(partition_build_DTM)(db, c, pipeline, data_dir,
-                                      term_id_map, log)
-             for c in collections]
-    dask.compute(*del_l)
-
-    if log:
-        t1 = datetime.now()
-        with open(os.path.join(data_dir, "DTM.log"), "a") as f:
-            f.write("bd %s\n" % str(t1 - t0))
 
 
 def clean_DTM(data_dir, log=True):

@@ -1,3 +1,4 @@
+from DiSTL.cleaning_util import vocab_cleaner
 from pymongo import MongoClient
 from datetime import datetime
 from dask import delayed
@@ -157,7 +158,7 @@ def _sql_backend(partition):
 # Builders #
 # -------- #
 
-def _default_builder(doc_generator):
+def default_builder(doc_generator):
     """
     builds a DF that contains whatever the generator returns
     """
@@ -166,7 +167,7 @@ def _default_builder(doc_generator):
     return df,
 
 
-def _count_builder(doc_generator):
+def count_builder(doc_generator):
     """
     builds a DF containing one entry for the count, the doc_generator here
     should yield one entry identifying the number of observations
@@ -176,7 +177,7 @@ def _count_builder(doc_generator):
     return count,
 
 
-def _vocab_builder(doc_generator):
+def vocab_builder(doc_generator):
     """
     builds a DF where each entry corresponds to a term and its count.  The
     generator should yield one observation for each term.  Note that this
@@ -186,7 +187,7 @@ def _vocab_builder(doc_generator):
     return _default_builder(doc_generator)
 
 
-def _DTM_builder(doc_generator, term_id_map):
+def DTM_builder(doc_generator, term_id_map):
     """
     builds a pair of DFs containing doc ids as well as triplet representation
     of DTM
@@ -231,7 +232,7 @@ def _DTM_builder(doc_generator, term_id_map):
 # Partition Build Wrapper #
 # ----------------------- #
 
-def _partition_handler(partition, backend, builer, backend_kwds,
+def _partition_handler(partition, backend, builder, backend_kwds,
                        builder_kwds, tmp_file_name_patterns,
                        log_file, log_info):
     """
@@ -290,8 +291,8 @@ def _partition_handler(partition, backend, builer, backend_kwds,
 def build_wrapper(partitions, backend, builder, tmp_file_name_patterns,
                   backend_kwds=None, builder_kwds=None,
                   log_file=None, log_info=None):
-   """
-
+    """
+    runs the partition handler in parallel over the different partitions
 
     Parameters
     ----------
@@ -323,9 +324,7 @@ def build_wrapper(partitions, backend, builder, tmp_file_name_patterns,
 
     # TODO remove tmp files and build dataframes directory from delayed
     # NOTE, the only reason this is hard right now is because each delayed
-    # object returns a tuple of dataframes instead of a single data frame...
-
-    t0 = datetime.now()
+    # object returns a tuple of dataframes instead of a single data frame
 
     if backend_kwds is None:
         backend_kwds = {}
@@ -388,9 +387,9 @@ def clean_count(data_dir, log=True):
 
 
 def clean_vocab(data_dir, stop_words=None, regex_stop_words=None,
-                pre_doc_lthresh=None, pre_doc_uthresh=None,
-                pre_tfidf_thresh=None, stemmer=None,
-                pre_term_length=None, log=True):
+                doc_lthresh=None, doc_uthresh=None,
+                tfidf_thresh=None, stemmer=None,
+                term_length=None, log=True):
     """
     loads the temporay vocab files, returned from each process,
     and combines these into one vocab by summing the counts.
@@ -415,13 +414,13 @@ def clean_vocab(data_dir, stop_words=None, regex_stop_words=None,
     stemmer : function or None
         function applied to pandas Series to generated stemmed
         version of series
-    pre_doc_<lthresh|uthresh> : scalar
-        <lower|upper> threshold for pre-stemming/stop word doc
+    doc_<lthresh|uthresh> : scalar
+        <lower|upper> threshold for stemming/stop word doc
         count thresholding should be between 0 and 1, is multiplied by
         D to determine count
-    pre_tfidf_thresh : scalar
-        tfidf threshold below for pre-stemming/stop words thresholding.
-    pre_term_length : scalar
+    tfidf_thresh : scalar
+        tfidf threshold below for stemming/stop words thresholding.
+    term_length : scalar
         minimum length required for term
     log : bool
         indicator for whether to record a log entry when done
@@ -444,52 +443,20 @@ def clean_vocab(data_dir, stop_words=None, regex_stop_words=None,
     vocab["raw_term"] = vocab.index
     vocab = vocab.reset_index(drop=True)
 
-
     # now apply cleaning rules
-
-    # removing stop words
-    if stop_words:
-        vocab = vocab[~vocab["raw_term"].isin(stop_words)]
-
-    # remove regex stop words
-    if regex_stop_words:
-        for term in list(regex_stop_words):
-            vocab = vocab[~vocab["raw_term"].str.contains(term, na=False)]
-
-    # apply count thresholding
-    if pre_doc_lthresh:
-        thresh = D * pre_doc_lthresh
-        vocab = vocab[vocab["count"] >= thresh]
-    if pre_doc_uthresh:
-        thresh = D * pre_doc_uthresh
-        vocab = vocab[vocab["count"] <= thresh]
-
-    # apply tfidf thresholding
-    if pre_tfidf_thresh:
-        raise ValueError("Tf-Idf thresholding is currently not supported")
-
-    # apply stemming
-    if stemmer:
-        vocab["term"] = stemmer(vocab[["raw_term"]])
-    else:
-        vocab["term"] = vocab["raw_term"]
-
-    # remove terms below term length
-    if pre_term_length:
-        fn = lambda x: len(x) >= pre_term_length
-        vocab = vocab[vocab["term"].apply(fn)]
+    vocab = vocab_cleaner(vocab, stop_words, regex_stop_words, doc_lthresh,
+                          doc_uthresh, tfidf_thresh, stemmer, term_length)
 
     # now generate term_id maps
     vocab = vocab.reset_index(drop=True)
     vocab["term_id"] = vocab.index
 
-
     # write the results
     vocab.to_csv(os.path.join(data_dir, "vocab.csv"), index=False)
 
     # remove temporary files
-#    for f in glob.glob(tmp_vocab_files):
-#        os.remove(os.path.join(data_dir, f))
+    for f in glob.glob(tmp_vocab_files):
+        os.remove(os.path.join(data_dir, f))
 
     if log:
         t1 = datetime.now()
@@ -554,12 +521,12 @@ def clean_DTM(data_dir, log=True):
     doc_id_dd.to_csv(os.path.join(data_dir, "doc_id_*.csv"), index=False)
 
     # remove tmp files
-    tmp_doc_files = glob.glob(tmp_doc_files)
-    for f in tmp_doc_files:
-        os.remove(f)
-    tmp_dtm_files = glob.glob(tmp_dtm_files)
-    for f in tmp_dtm_files:
-        os.remove(f)
+#    tmp_doc_files = glob.glob(tmp_doc_files)
+#    for f in tmp_doc_files:
+#        os.remove(f)
+#    tmp_dtm_files = glob.glob(tmp_dtm_files)
+#    for f in tmp_dtm_files:
+#        os.remove(f)
 
     if log:
         t1 = datetime.now()

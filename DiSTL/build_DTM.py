@@ -521,12 +521,12 @@ def clean_triplet(data_dir, log=True):
     doc_id_dd.to_csv(os.path.join(data_dir, "doc_id_*.csv"), index=False)
 
     # remove tmp files
-#    tmp_doc_files = glob.glob(tmp_doc_files)
-#    for f in tmp_doc_files:
-#        os.remove(f)
-#    tmp_dtm_files = glob.glob(tmp_dtm_files)
-#    for f in tmp_dtm_files:
-#        os.remove(f)
+    tmp_doc_files = glob.glob(tmp_doc_files)
+    for f in tmp_doc_files:
+        os.remove(f)
+    tmp_dtm_files = glob.glob(tmp_dtm_files)
+    for f in tmp_dtm_files:
+        os.remove(f)
 
     if log:
         t1 = datetime.now()

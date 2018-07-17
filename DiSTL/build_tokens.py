@@ -356,18 +356,18 @@ def build_wrapper(partitions, backend, doc_processor, doc_generator,
     doc_processor_init = lambda x: doc_processor(x, tokenizer,
                                                  **doc_processor_kwds)
 
-#    for part, backend_kwds, doc_generator_kwds in part_kwds_generator(partitions, **part_kwds_generator_kwds):
-#        partition_handler(part, backend, doc_generator, doc_processor_init,
-#                          backend_kwds, doc_generator_kwds, log_file,
-#                          log_info)
-    del_l = [delayed(partition_handler)(part, backend, doc_generator,
-                                        doc_processor_init, backend_kwds,
-                                        doc_generator_kwds, log_file,
-                                        log_info)
-            for part, backend_kwds, doc_generator_kwds
-            in part_kwds_generator(partitions, **part_kwds_generator_kwds)]
-
-    compute(*del_l, scheduler="processes")
+    for part, backend_kwds, doc_generator_kwds in part_kwds_generator(partitions, **part_kwds_generator_kwds):
+        partition_handler(part, backend, doc_generator, doc_processor_init,
+                          backend_kwds, doc_generator_kwds, log_file,
+                          log_info)
+#    del_l = [delayed(partition_handler)(part, backend, doc_generator,
+#                                        doc_processor_init, backend_kwds,
+#                                        doc_generator_kwds, log_file,
+#                                        log_info)
+#            for part, backend_kwds, doc_generator_kwds
+#            in part_kwds_generator(partitions, **part_kwds_generator_kwds)]
+#
+#    compute(*del_l, scheduler="processes")
 
     if log_file:
         t1 = datetime.now()

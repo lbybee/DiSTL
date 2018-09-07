@@ -105,8 +105,9 @@ def drop_temp_term_table(db, schema, ngram):
     conn.close()
 
 
-def count_query(db, schema, date, txt_labels, ngram_l, gen_doc_query,
-                gen_count_query, data_dir, log_file, gen_doc_query_kwds=None):
+def count_query(db, schema, date, txt_labels, ngram_l, gen_full_doc_sql,
+                gen_count_sql, data_dir, log_file,
+                gen_full_doc_sql_kwds=None):
     """selects the counts which meet the search criteria for terms and docs
     and writes them to a set of output files
 
@@ -122,16 +123,16 @@ def count_query(db, schema, date, txt_labels, ngram_l, gen_doc_query,
         list of labels for txt categories
     ngram_l : list
         list of ngram labels
-    gen_doc_query : function
-        method for generating doc queries
-    gen_count_query : function
-        method for generating count queries
+    gen_full_doc_sql : function
+        method for generating doc sql
+    gen_count_sql : function
+        method for generating count sql
     data_dir : str
         location where output is to be stored
     log_file : None or str
         if None location where log is written when done
-    gen_doc_query_kwds : dict-like or None
-        key words passed to gen_doc_query
+    gen_full_doc_sql_kwds : dict-like or None
+        key words passed to gen_full_doc_sql
 
     Returns
     -------
@@ -143,8 +144,8 @@ def count_query(db, schema, date, txt_labels, ngram_l, gen_doc_query,
     2. count files
     """
 
-    if gen_doc_query_kwds is None:
-        gen_doc_query_kwds = {}
+    if gen_full_doc_sql_kwds is None:
+        gen_full_doc_sql_kwds = {}
 
     t0 = datetime.now()
     conn = psycopg2.connect(host="localhost", database=db,
@@ -154,7 +155,7 @@ def count_query(db, schema, date, txt_labels, ngram_l, gen_doc_query,
     conn.commit()
 
     # prep doc sql and doc_id_sql
-    doc_sql, doc_id_sql = gen_doc_query(date, **gen_doc_query_kwds)
+    doc_sql, doc_id_sql = gen_full_doc_sql(date, **gen_full_doc_sql_kwds)
 
     # write doc id
     with open(os.path.join(data_dir, "doc_id_%s.csv" % date), "w") as fd:
@@ -168,7 +169,7 @@ def count_query(db, schema, date, txt_labels, ngram_l, gen_doc_query,
     for ngram in ngram_l:
         for t_label in txt_labels:
             t0 = datetime.now()
-            count_sql = gen_count_sql(doc_sql, t_label, ngram, date)
+            count_sql = gen_count_sql(doc_sql, date, t_label, ngram)
 
             count_f = os.path.join(data_dir, "count_%s_%s_%s.csv" % (t_label,
                                                                      ngram,
@@ -183,9 +184,9 @@ def count_query(db, schema, date, txt_labels, ngram_l, gen_doc_query,
 
 
 def DTM_wrapper(db, schema, processes, dates, txt_labels, ngram_l,
-                gen_doc_query, gen_count_query, data_dir, log_file,
+                gen_full_doc_sql, gen_count_sql, data_dir, log_file,
                 ngram_term_threshold_dict, ngram_stop_words_dict,
-                ngram_regex_stop_words_dict, gen_doc_query_kwds=None):
+                ngram_regex_stop_words_dict, gen_full_doc_sql_kwds=None):
     """wrapper called by run script to build DTM
 
     Parameters
@@ -202,10 +203,10 @@ def DTM_wrapper(db, schema, processes, dates, txt_labels, ngram_l,
         list of labels for txt categories
     ngram_l : list
         list of ngram labels
-    gen_doc_query : function
-        method for generating doc queries
-    gen_count_query : function
-        method for generating count queries
+    gen_full_doc_sql : function
+        method for generating doc sql
+    gen_count_sql : function
+        method for generating count sql
     data_dir : str
         location where output is to be stored
     log_file : None or str
@@ -216,8 +217,8 @@ def DTM_wrapper(db, schema, processes, dates, txt_labels, ngram_l,
         dictionary mapping each ngram to stop words list
     ngram_regex_stop_words_dict : dict-like
         dictionary mapping each ngram to regex stop words list
-    gen_doc_query_kwds : dict-like or None
-        key words passed to gen_doc_query
+    gen_full_doc_sql_kwds : dict-like or None
+        key words passed to gen_full_doc_sql
 
     Returns
     -------
@@ -245,8 +246,8 @@ def DTM_wrapper(db, schema, processes, dates, txt_labels, ngram_l,
 
     # count (and doc) query
     pool.starmap(count_query, [(db, schema, d, txt_labels, ngram_l,
-                                gen_doc_query, gen_count_query, data_dir,
-                                log_file, gen_doc_query_kwds)
+                                gen_full_doc_sql, gen_count_sql, data_dir,
+                                log_file, gen_full_doc_sql_kwds)
                                for d in dates])
 
     # drop tmp tables

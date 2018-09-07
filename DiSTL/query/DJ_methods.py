@@ -187,9 +187,8 @@ def gen_ticker_day_doc_sql(doc_sql, threshold=0):
 
     # generate the new id for thresholding
     # TODO this could likely be simplified
-    sql = """SELECT tag_label,
+    sql = """SELECT *,
                     date(display_date) AS day_date,
-                    tmp_doc.doc_id,
                     (tmp_doc.headline_term_count
                      + tmp_doc.body_term_count) AS term_count,
                     dense_rank()
@@ -312,7 +311,7 @@ def gen_ticker_month_doc_id_sql(doc_sql):
     return sql
 
 
-def gen_count_query(doc_sql, date, t_label, ngram):
+def gen_count_sql(doc_sql, date, t_label, ngram):
     """joins the temporary term and doc tables with the counts and
     dumps the results to the provided file
 
@@ -345,9 +344,9 @@ def gen_count_query(doc_sql, date, t_label, ngram):
     return sql
 
 
-def gen_doc_query(date, tag_drop_dict={}, headline_l=[], author_l=[],
-                  article_threshold=0, company_id_l=[], agg_type="article",
-                  agg_threshold=0):
+def gen_full_doc_sql(date, tag_drop_dict={}, headline_l=[], author_l=[],
+                     article_threshold=0, company_id_l=[],
+                     agg_type="article", agg_threshold=0):
     """generates the doc query and doc id query for the provided params
 
     Parameters

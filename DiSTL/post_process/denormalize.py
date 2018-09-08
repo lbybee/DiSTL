@@ -58,7 +58,8 @@ def gen_doc_id_map(doc_id, col_labels):
     return doc_id_map_dict
 
 
-def date_builder(date, source_data_dir, out_data_dir, term_id_map_dict):
+def date_builder(date, source_data_dir, out_data_dir, ngrams,
+                 term_id_map_dict, doc_id_type="ticker_day"):
     """loads the doc ids and counts and writes to new file which is
     denormalized (so mapping through intermediate indices)
 
@@ -70,6 +71,8 @@ def date_builder(date, source_data_dir, out_data_dir, term_id_map_dict):
         location where input files are located
     out_data_dir : str
         location where output will be stored
+    ngrams : list
+        list of ngrams
     term_id_map_dict : dict-like
         dictionary mapping term ids to terms
     doc_id_type : str
@@ -154,4 +157,5 @@ def denormalize_wrapper(source_data_dir, out_data_dir, processes,
     pool = multiprocessing.Pool(processes)
 
     pool.starmap(date_builder, [(d, source_data_dir, out_data_dir,
-                                 term_id_map_dict) for d in dates]
+                                 ngrams, term_id_map_dict, doc_id_type)
+                                for d in dates])

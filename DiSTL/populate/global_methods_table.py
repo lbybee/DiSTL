@@ -1,4 +1,5 @@
-from global_methods_general import tokenizer, vocab_cleaner, default_lemmatizer
+from .global_methods_general import tokenizer, vocab_cleaner, \
+                                    default_lemmatizer
 from datetime import datetime
 import dask.dataframe as dd
 import pandas as pd

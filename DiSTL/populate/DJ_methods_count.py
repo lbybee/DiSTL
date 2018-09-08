@@ -1,6 +1,6 @@
-from global_methods_count import unigram_counter, ngram_counter
-from global_methods_general import tokenizer
-from DJ_methods_general import doc_generator
+from .global_methods_count import unigram_counter, ngram_counter
+from .global_methods_general import tokenizer
+from .DJ_methods_general import doc_generator
 from datetime import datetime
 import os
 

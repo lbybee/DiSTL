@@ -5,31 +5,7 @@ import sys
 import os
 
 
-def load_permno(permno_f):
-    """loads the permno file and preps to merge with doc_id
-
-    Parameters
-    ----------
-    permno_f : str
-        permno file name
-
-    Returns
-    -------
-    pandas dataframe
-    """
-
-    permno_df = pd.read_csv(permno_f, sep="\t")
-    permno_df.columns = ["permno", "date", "ticker", "permco", "ret"]
-    permno_df["date"] = pd.to_datetime(permno_df["date"].astype(str))
-    permno_df["year"] = permno_df["date"].dt.year
-    permno_df["month"] = permno_df["date"].dt.month
-    permno_df = permno_df[~permno_df.duplicated(["ticker", "date"])]
-    permno_df = permno_df.drop(["date"], axis=1)
-
-    return permno_df
-
-
-def load_term_ids(source_data_dir, ngrams):
+def load_term_id(source_data_dir, out_data_dir, ngrams):
     """loads the term ids, writes the updated term_ids and returns the offset
     dict
 
@@ -37,6 +13,8 @@ def load_term_ids(source_data_dir, ngrams):
     ----------
     source_data_dir : str
         location of source data files
+    out_data_dir : str
+        location where results are stored
     ngrams : int
         number of ngrams
 
@@ -62,6 +40,30 @@ def load_term_ids(source_data_dir, ngrams):
         term_id_offset += len(term_id)
 
     return term_id_offset_dict
+
+
+def load_permno(permno_f):
+    """loads the permno file and preps to merge with doc_id
+
+    Parameters
+    ----------
+    permno_f : str
+        permno file name
+
+    Returns
+    -------
+    pandas dataframe
+    """
+
+    permno_df = pd.read_csv(permno_f, sep="\t")
+    permno_df.columns = ["permno", "date", "ticker", "permco", "ret"]
+    permno_df["date"] = pd.to_datetime(permno_df["date"].astype(str))
+    permno_df["year"] = permno_df["date"].dt.year
+    permno_df["month"] = permno_df["date"].dt.month
+    permno_df = permno_df[~permno_df.duplicated(["ticker", "date"])]
+    permno_df = permno_df.drop(["date"], axis=1)
+
+    return permno_df
 
 
 def load_day_doc_id(source_data_dir, date, permno_df):
@@ -119,9 +121,10 @@ def load_month_doc_id(source_data_dir, tmp_dir, date, permno_df):
     return doc_id
 
 
-def counter(source_data_dir, tmp_dir, date, permno_df, doc_id_type="day"):
-    """counts the number of documents for each doc_id file, this is done so that
-    we can reindex the counts in parallel
+def counter(source_data_dir, tmp_dir, date, permno_df,
+            doc_id_type="ticker_day"):
+    """counts the number of documents for each doc_id file, this is done so
+    that we can reindex the counts in parallel
 
     Parameters
     ----------
@@ -145,9 +148,9 @@ def counter(source_data_dir, tmp_dir, date, permno_df, doc_id_type="day"):
     counts
     """
 
-    if doc_id_type == "day":
+    if doc_id_type == "ticker_day":
         doc_id = load_day_doc_id(source_data_dir, date, permno_df)
-    elif doc_id_type = "month":
+    elif doc_id_type == "ticker_month":
         doc_id = load_month_doc_id(source_data_dir, date, permno_df)
     else:
         raise ValueError("Unsupported doc_id_type: %s" % doc_id_type)
@@ -159,7 +162,7 @@ def counter(source_data_dir, tmp_dir, date, permno_df, doc_id_type="day"):
 
 # generate reindexed files
 def reindexer(source_data_dir, tmp_dir, out_data_dir, date, permno_df,
-              ngrams, term_id_offset_dict, doc_id_type="day"):
+              ngrams, term_id_offset_dict, doc_id_type="ticker_day"):
     """reindexes the counts, this updates the term_id and doc_id and writes
     the updated doc_ids and counts
 
@@ -200,9 +203,9 @@ def reindexer(source_data_dir, tmp_dir, out_data_dir, date, permno_df,
     doc_id_offset = agg_counts["count"].sum()
 
     # load doc id
-    if doc_id_type == "day":
+    if doc_id_type == "ticker_day":
         doc_id = load_day_doc_id(source_data_dir, date, permno_df)
-    elif doc_id_type = "month":
+    elif doc_id_type == "ticker_month":
         doc_id = load_month_doc_id(source_data_dir, date, permno_df)
     else:
         raise ValueError("Unsupported doc_id_type: %s" % doc_id_type)
@@ -245,8 +248,8 @@ def reindexer(source_data_dir, tmp_dir, out_data_dir, date, permno_df,
                      index=False)
 
 
-def reindex_wrapper(source_data_dir, tmp_dir, out_data_dir, processes, permno_f,
-                    ngrams, doc_id_type="day"):
+def reindex_wrapper(source_data_dir, tmp_dir, out_data_dir, processes,
+                    permno_f, doc_id_type="ticker_day"):
     """runs the reindexing code
 
     Parameters
@@ -261,8 +264,6 @@ def reindex_wrapper(source_data_dir, tmp_dir, out_data_dir, processes, permno_f,
         number of processes for multiprocessing
     permno_df : pandas dataframe
         dataframe containing permnos
-    ngrams : int
-        number of ngrams
     term_id_offset_dict : dict-like
         dictionary mapping ngrams to offset
     doc_id_type : str
@@ -297,7 +298,7 @@ def reindex_wrapper(source_data_dir, tmp_dir, out_data_dir, processes, permno_f,
     permno_df = load_permno(permno_f)
 
     # handle term ids/indices
-    term_id_offset_dict = load_term_id(source_data_dir, ngrams)
+    term_id_offset_dict = load_term_id(source_data_dir, out_data_dir, ngrams)
 
     # generate agg counts
     count_f = os.path.join(tmp_dir, "counts.csv")

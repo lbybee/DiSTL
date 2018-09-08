@@ -1,6 +1,6 @@
-from global_methods_table import token_binner
-from global_methods_general import tokenizer
-from DJ_methods_general import doc_generator
+from .global_methods_table import token_binner
+from .global_methods_general import tokenizer
+from .DJ_methods_general import doc_generator
 from datetime import datetime
 import os
 import re

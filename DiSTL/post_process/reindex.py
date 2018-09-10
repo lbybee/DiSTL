@@ -90,7 +90,7 @@ def load_day_doc_id(source_data_dir, date, permno_df):
     doc_id["year"] = doc_id["date"].dt.year
     doc_id["month"] = doc_id["date"].dt.month
     doc_id = doc_id.merge(permno_df, on=("ticker", "year", "month"))
-    doc_id = doc_id.drop(["year", "month"], axis=1)
+    doc_id = doc_id[["permno", "date", "doc_id"]]
 
     return doc_id
 
@@ -117,6 +117,7 @@ def load_month_doc_id(source_data_dir, tmp_dir, date, permno_df):
                                       "doc_id_%s.csv" % date),
                          names=["ticker", "year", "month", "doc_id"])
     doc_id = doc_id.merge(permno_df, on=("ticker", "year", "month"))
+    doc_id = doc_id[["permno", "year", "month", "doc_id"]]
 
     return doc_id
 

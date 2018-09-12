@@ -163,7 +163,54 @@ def gen_article_doc_id_sql(doc_sql):
     doc id query
     """
 
-    sql = """SELECT new_doc_id, display_date, accession_number
+    sql = """SELECT display_date, accession_number, new_doc_id
+                FROM (%s) as tmp_doc
+          """ % doc_sql
+    return sql
+
+
+def gen_day_doc_sql(doc_sql, threshold=0):
+    """generates the query for extracting days from the database
+    (applying any daily threhsolding in the process)
+
+    Parameters
+    ----------
+    doc_sql : str
+        current sql query
+    threshold : int
+        term count threhsold for dropping days
+
+    Returns
+    -------
+    doc query
+    """
+
+    sql = """SELECT *,
+                    date(display_date) AS day_date,
+                    dense_rank()
+                    OVER(ORDER BY date(display_date))
+                    AS new_doc_id
+             FROM (%s) AS tmp_doc
+             WHERE (headline_term_count + body_term_count) > %d
+          """ % (doc_sql, threshold)
+    return sql
+
+
+def gen_day_doc_id_sql(doc_sql):
+    """generates the query needed to write da doc id info to a csv
+
+    Parameters
+    ----------
+    doc_sql : str
+        current sql query
+
+    Returns
+    -------
+    doc id query
+    """
+
+    sql = """SELECT DISTINCT ON (new_doc_id)
+                day_date, new_doc_id
                 FROM (%s) as tmp_doc
           """ % doc_sql
     return sql
@@ -388,6 +435,10 @@ def gen_full_doc_sql(date, tag_drop_dict={}, headline_l=[], author_l=[],
     if agg_type == "article":
         doc_sql = gen_article_doc_sql(sql, agg_threshold)
         doc_id_sql = gen_article_doc_id_sql(doc_sql)
+
+    elif agg_type == "day":
+        doc_sql = gen_day_doc_sql(sql, agg_threshold)
+        doc_id_sql = gen_day_doc_id_sql(doc_sql)
 
     elif agg_type == "ticker_day":
         doc_sql = gen_ticker_day_doc_sql(sql, agg_threshold)

@@ -80,7 +80,10 @@ def load_permno(permno_f):
 
 def load_article_doc_id(source_data_dir, date):
 
-    raise NotImplementedError()
+    doc_id = pd.read_csv(os.path.join(source_data_dir,
+                                      "doc_id_%s.csv" % date),
+                         names=["display_date", "accession_number", "doc_id"])
+    return doc_id
 
 
 def load_month_doc_id(source_data_dir, date):

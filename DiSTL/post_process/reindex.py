@@ -49,7 +49,8 @@ def load_term_id(source_data_dir, out_data_dir, term_partitions):
 
 
 def counter(source_data_dir, agg_count_dir, doc_part, load_doc_id_method,
-            metadata_df=None, metadata_merge_columns=None):
+            doc_id_method_kwds, metadata_df=None,
+            metadata_merge_columns=None):
     """counts the number of documents for each doc_id file, this is done so
     that we can reindex the counts in parallel
 
@@ -63,6 +64,8 @@ def counter(source_data_dir, agg_count_dir, doc_part, load_doc_id_method,
         current document partition label
     load_doc_id_method : function
         method used for loading doc id
+    doc_id_method_kwds : dict-like
+        key-words to pass to load_doc_id_method
     metadata_df : None or pandas dataframe
         dataframe containing metadata
     metadata_merge_columns : list or None
@@ -78,7 +81,8 @@ def counter(source_data_dir, agg_count_dir, doc_part, load_doc_id_method,
     temporary agg counts
     """
 
-    doc_id = load_doc_id_method(source_data_dir, doc_part)
+    doc_id = load_doc_id_method(source_data_dir, doc_part,
+                                **doc_id_method_kwds)
     if metadata_merge_columns:
         doc_id = doc_id.merge(metadata_df, on=metadata_merge_columns)
 
@@ -88,9 +92,10 @@ def counter(source_data_dir, agg_count_dir, doc_part, load_doc_id_method,
 
 
 def reindexer(source_data_dir, agg_count_dir, out_data_dir,
-              load_doc_id_method, doc_part, term_partitions,
-              term_id_offset_dict, term_agg_partitions=None,
-              metadata_df=None, metadata_merge_columns=None):
+              load_doc_id_method, doc_id_method_kwds,
+              doc_part, term_partitions, term_id_offset_dict,
+              term_agg_partitions=None, metadata_df=None,
+              metadata_merge_columns=None, sort_columns=None):
     """reindexes the counts, this updates the term_id and doc_id and writes
     the updated doc_ids and counts
 
@@ -104,6 +109,8 @@ def reindexer(source_data_dir, agg_count_dir, out_data_dir,
         location where results are stored
     load_doc_id_method : function
         method used for loading doc id
+    doc_id_method_kwds : dict-like
+        key-words to pass to load_doc_id_method
     doc_part : str
         label for current doc id
     term_partitions : None or list
@@ -123,6 +130,8 @@ def reindexer(source_data_dir, agg_count_dir, out_data_dir,
     metadata_merge_columns : list or None
         if list this contains the columns which the doc id is merged to
         the metadata on
+    sort_columns : list or None
+        list of columns which we'd like to sort the resulting doc_ids on
 
     Returns
     -------
@@ -144,12 +153,17 @@ def reindexer(source_data_dir, agg_count_dir, out_data_dir,
     doc_id_offset = agg_counts["count"].sum()
 
     # load doc id and merge with metadata
-    doc_id = load_doc_id_method(source_data_dir, doc_part)
+    doc_id = load_doc_id_method(source_data_dir, doc_part,
+                                **doc_id_method_kwds)
     if metadata_merge_columns:
         doc_id = doc_id.merge(metadata_df, on=metadata_merge_columns)
 
+    if sort_columns:
+        doc_id = doc_id.sort_values(sort_columns)
+
     # generate new doc_id
     doc_id_map = doc_id[["doc_id"]]
+    doc_id_map = doc_id_map.reset_index(drop=True)
     doc_id_map["new_doc_id"] = doc_id_map.index + doc_id_offset
     doc_id_map.index = doc_id_map["doc_id"]
     doc_id_map = doc_id_map["new_doc_id"]
@@ -197,8 +211,11 @@ def reindexer(source_data_dir, agg_count_dir, out_data_dir,
 def reindex_wrapper(source_data_dir, agg_count_dir, out_data_dir, processes,
                     load_doc_id_method, doc_partitions,
                     term_partitions, term_agg_partitions=None,
-                    metadata_f=None, load_metadata_method=None,
-                    metadata_merge_columns=None):
+                    doc_id_method_kwds=None, metadata_f=None,
+                    load_metadata_method=None,
+                    metadata_method_kwds=None,
+                    metadata_merge_columns=None,
+                    sort_columns=None):
     """runs the reindexing code
 
     Parameters
@@ -217,7 +234,7 @@ def reindex_wrapper(source_data_dir, agg_count_dir, out_data_dir, processes,
         list of partitions which doc_ids are split over (e.g. dates)
         these should correspond to elements in doc_id files
         (e.g. doc_id_<doc_part_label>.csv)
-    term_partitions : None or list
+    term_partitions : list
         list of partitions for terms (e.g. ngrams)
         these should correspond to elements in term_id files
         (e.g. term_id_<agg_part_label>_<term_part_label>.csv)
@@ -227,14 +244,20 @@ def reindex_wrapper(source_data_dir, agg_count_dir, out_data_dir, processes,
         process (e.g. headlines and body) the count files should be
         of the form:
         count_<agg_part_label>_<term_part_label>_<doc_part_label>.csv
+    doc_id_method_kwds : dict-like or None
+        key-words to pass to load_doc_id_method
     metadata_f : None or str
         location of metadata file if exists
     load_metadata_method : function or None
         method which takes the metadata_f and doc_partitions
         list and returns a partitioned dataframe split along
         the doc_partitions corresponding to the metadata
+    metadata_method_kwds : dict-like or None
+        key-words to pass to load_metadata_method
     metadata_merge_columns : None or list
         list of columns to merge metadata to doc_id
+    sort_columns : list or None
+        list of columns which we'd like to sort the resulting doc_ids on
 
     Returns
     -------
@@ -250,10 +273,17 @@ def reindex_wrapper(source_data_dir, agg_count_dir, out_data_dir, processes,
     # initialize multiprocessing pool
     pool = multiprocessing.Pool(processes)
 
+    # initialize kwds
+    if doc_id_method_kwds is None:
+        doc_id_method_kwds = {}
+    if metadata_method_kwds is None:
+        metadata_method_kwds = {}
+
     # load permno ticker map
     if metadata_f:
         metadata_df_partitions = load_metadata_method(metadata_f,
-                                                      doc_partitions)
+                                                      doc_partitions,
+                                                      **metadata_method_kwds)
     else:
         metadata_df_partitions = [None for part in doc_partitions]
 
@@ -266,14 +296,15 @@ def reindex_wrapper(source_data_dir, agg_count_dir, out_data_dir, processes,
     if os.path.exists(count_f):
         os.remove(count_f)
     pool.starmap(counter, [(source_data_dir, agg_count_dir, part,
-                            load_doc_id_method, metadata_df_partitions[i],
+                            load_doc_id_method, doc_id_method_kwds,
+                            metadata_df_partitions[i],
                             metadata_merge_columns)
                             for i, part in enumerate(doc_partitions)])
 
     # generate reindexed docs and counts
     pool.starmap(reindexer, [(source_data_dir, agg_count_dir, out_data_dir,
-                              load_doc_id_method, part, term_partitions,
-                              term_id_offset_dict, term_agg_partitions,
-                              metadata_df_partitions[i],
-                              metadata_merge_columns)
+                              load_doc_id_method, doc_id_method_kwds,
+                              part, term_partitions, term_id_offset_dict,
+                              term_agg_partitions, metadata_df_partitions[i],
+                              metadata_merge_columns, sort_columns)
                              for i, part in enumerate(doc_partitions)])

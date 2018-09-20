@@ -7,6 +7,11 @@ import pandas as pd
 import os
 
 
+# --------------- #
+# term_id Loaders #
+# --------------- #
+
+
 # -------------- #
 # doc_id Loaders #
 # -------------- #
@@ -53,9 +58,14 @@ def load_ticker_day_doc_id(source_data_dir, doc_part):
     return doc_id
 
 
-# ---------------- #
-# metadata Loaders #
-# ---------------- #
+# --------------------- #
+# term metadata Loaders #
+# --------------------- #
+
+
+# ------------------------- #
+# document metadata Loaders #
+# ------------------------- #
 
 def load_permno_metadata(metadata_f, doc_partitions):
     """loads metadata that really just contains permno-ticker maps, this

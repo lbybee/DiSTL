@@ -89,8 +89,9 @@ def gen_doc_sql(tag_sql, date, headline_l=[], author_l=[],
     return doc_sql
 
 
-def gen_company_sql(doc_sql, date, company_id_l):
-    """joins the desired company ids with the doc sql
+def gen_const_company_sql(doc_sql, date, company_id_l):
+    """generates a sql query returing doc metadata as well as tag
+    label constrained to company_id_l
 
     Parameters
     ----------
@@ -123,6 +124,40 @@ def gen_company_sql(doc_sql, date, company_id_l):
                  date, date, doc_sql)
 
     return sql
+
+
+def gen_full_company_sql(doc_sql, date):
+    """generates a sql query returning doc metadata as well as tag
+    label for all docs
+
+    Parameters
+    ----------
+    doc_sql : str
+        query returned by gen_doc_sql
+    date : str
+        date label
+
+    Returns
+    -------
+    updated query
+    """
+
+    sql = """SELECT tag_label,
+                    tmp_doc.*
+             FROM (SELECT tag_label, tag_link_djn_company_%s.tag_id, doc_id
+                   FROM
+                   (SELECT tag_label, tag_id
+                    FROM tag_djn_company
+                   ) AS tmp_tag
+                   INNER JOIN tag_link_djn_company_%s
+                   ON tmp_tag.tag_id = tag_link_djn_company_%s.tag_id
+                  ) AS tmp_tag_doc
+             INNER JOIN (%s) AS tmp_doc
+             ON tmp_tag_doc.doc_id = tmp_doc.doc_id
+          """ % (date, date, date, doc_sql)
+
+    return sql
+
 
 
 def gen_article_doc_sql(doc_sql, threshold=0):
@@ -279,10 +314,14 @@ def gen_ticker_day_doc_id_sql(doc_sql):
     doc id query
     """
 
-    sql = """SELECT DISTINCT ON (new_doc_id)
-                tag_label, day_date, new_doc_id
-                FROM (%s) as tmp_doc""" % doc_sql
+    sql = """SELECT min(tag_label),
+                    min(day_date),
+                    new_doc_id,
+                    COUNT(tag_label) AS article_count
+                FROM (%s) AS tmp_doc
+                GROUP BY new_doc_id""" % doc_sql
     return sql
+
 
 def gen_ticker_month_doc_sql(doc_sql, threshold=0):
     """generates the query for extracting ticker-months from the database
@@ -316,7 +355,7 @@ def gen_ticker_month_doc_sql(doc_sql, threshold=0):
              FROM (%s) AS tmp_doc
           """ % (doc_sql)
 
-    # select based on daily threshold
+    # select based on monthly threshold
     sql = """SELECT tag_label,
                     year,
                     month,
@@ -352,13 +391,17 @@ def gen_ticker_month_doc_id_sql(doc_sql):
     doc id query
     """
 
-    sql = """SELECT DISTINCT ON (new_doc_id)
-                tag_label, year, month, new_doc_id
-                FROM (%s) as tmp_doc""" % doc_sql
+    sql = """SELECT min(tag_label),
+                    min(year),
+                    min(month),
+                    new_doc_id,
+                    COUNT(tag_label) AS article_count
+                FROM (%s) AS tmp_doc
+                GROUP BY new_doc_id""" % doc_sql
     return sql
 
 
-def gen_count_sql(doc_sql, date, t_label, ngram):
+def gen_count_sql(doc_sql, date, ngram, t_label):
     """joins the temporary term and doc tables with the counts and
     dumps the results to the provided file
 
@@ -368,10 +411,10 @@ def gen_count_sql(doc_sql, date, t_label, ngram):
         current sql query
     date : str
         date label
-    t_label : str
-        label for current txt category
     ngram : str
         ngram label
+    t_label : str
+        label for current txt category
 
     Returns
     -------
@@ -391,16 +434,17 @@ def gen_count_sql(doc_sql, date, t_label, ngram):
     return sql
 
 
-def gen_full_doc_sql(date, tag_drop_dict={}, headline_l=[], author_l=[],
-                     article_threshold=0, company_id_l=[],
-                     agg_type="article", agg_threshold=0):
+def gen_full_doc_sql(date, tag_drop_dict=None, headline_l=[],
+                     author_l=[], article_threshold=0,
+                     company_id_l=[], agg_type="article",
+                     agg_threshold=0):
     """generates the doc query and doc id query for the provided params
 
     Parameters
     ----------
     date : str
         date for corresponding tables
-    tag_drop_dict : dict-like
+    tag_drop_dict : dict-like or None
         dictionary containing tag categories to drop (keys) as well as list
         of actual tags to drop (values)
     headline_l : list
@@ -409,7 +453,7 @@ def gen_full_doc_sql(date, tag_drop_dict={}, headline_l=[], author_l=[],
         list of author patterns to drop
     article_threshold : int
         headline + body term count required to keep article
-    company_id_l : list of str
+    company_id_l : list
         list of tickers to extract
     agg_type : str
         lvl of aggregation for final document
@@ -421,7 +465,7 @@ def gen_full_doc_sql(date, tag_drop_dict={}, headline_l=[], author_l=[],
     tuple containing doc threshold and doc id threhsold
     """
 
-    if len(tag_drop_dict) > 0:
+    if tag_drop_dict:
         sql = gen_tag_sql(date, tag_drop_dict)
     else:
         sql = "SELECT * FROM doc_%s" % date
@@ -430,7 +474,9 @@ def gen_full_doc_sql(date, tag_drop_dict={}, headline_l=[], author_l=[],
         sql = gen_doc_sql(sql, date, headline_l, author_l, article_threshold)
 
     if len(company_id_l) > 0:
-        sql = gen_company_sql(sql, date, company_id_l)
+        sql = gen_const_company_sql(sql, date, company_id_l)
+    elif "ticker" in agg_type:
+        sql = gen_full_company_sql(sql, date)
 
     if agg_type == "article":
         doc_sql = gen_article_doc_sql(sql, agg_threshold)

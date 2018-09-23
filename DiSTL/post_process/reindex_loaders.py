@@ -19,8 +19,7 @@ import os
 def load_article_doc_id(source_data_dir, doc_part):
 
     doc_id = pd.read_csv(os.path.join(source_data_dir,
-                                      "doc_id_%s.csv" % doc_part),
-                         names=["display_date", "accession_number", "doc_id"])
+                                      "doc_id_%s.csv" % doc_part))
     doc_id["display_date"] = pd.to_datetime(doc_id["display_date"])
 
     return doc_id
@@ -28,15 +27,13 @@ def load_article_doc_id(source_data_dir, doc_part):
 def load_month_doc_id(source_data_dir, doc_part):
 
     doc_id = pd.read_csv(os.path.join(source_data_dir,
-                                      "doc_id_%s.csv" % doc_part),
-                         names=["year", "month", "doc_id"])
+                                      "doc_id_%s.csv" % doc_part))
     return doc_id
 
 def load_day_doc_id(source_data_dir, doc_part):
 
     doc_id = pd.read_csv(os.path.join(source_data_dir,
-                                      "doc_id_%s.csv" % doc_part),
-                         names=["date", "doc_id"])
+                                      "doc_id_%s.csv" % doc_part))
     doc_id["date"] = pd.to_datetime(doc_id["date"])
 
     return doc_id
@@ -44,15 +41,14 @@ def load_day_doc_id(source_data_dir, doc_part):
 def load_ticker_month_doc_id(source_data_dir, doc_part):
 
     doc_id = pd.read_csv(os.path.join(source_data_dir,
-                                      "doc_id_%s.csv" % doc_part),
-                         names=["ticker", "year", "month", "doc_id"])
+                                      "doc_id_%s.csv" % doc_part))
+
     return doc_id
 
 def load_ticker_day_doc_id(source_data_dir, doc_part):
 
     doc_id = pd.read_csv(os.path.join(source_data_dir,
-                                      "doc_id_%s.csv" % doc_part),
-                         names=["ticker", "date", "doc_id"])
+                                      "doc_id_%s.csv" % doc_part))
     doc_id["date"] = pd.to_datetime(doc_id["date"])
 
     return doc_id

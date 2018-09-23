@@ -14,14 +14,14 @@ def load_term_id(source_data_dir, out_data_dir, term_partitions):
 
     Parameters
     ----------
-    source_data_dir : str
-        location of source data files
-    out_data_dir : str
-        location where results are stored
+    input_dict : dictionary
+        each key is a term_part and each value an input file
+    output_dict : dictionary
+        each key is a term_part and each value an output file
     term_partitions : None or list
         list of partitions for terms (e.g. ngrams)
         these should correspond to elements in term_id files
-        (e.g. term_id_<agg_part_label>_<term_part_label>.csv)
+        (e.g. term_id_<term_part>.csv)
 
     Returns
     -------
@@ -36,15 +36,13 @@ def load_term_id(source_data_dir, out_data_dir, term_partitions):
     term_id_offset_dict = {}
     for term_part in term_partitions:
         term_id = pd.read_csv(os.path.join(source_data_dir,
-                                           "term_id_%s.csv" % term_part),
-                              names=["term", "term_id"])
+                                           "term_id_%s.csv" % term_part))
         term_id["term_id"] += term_id_offset
         term_id_offset_dict[term_part] = term_id_offset
         term_id.to_csv(os.path.join(out_data_dir,
                                     "term_id_%s.csv" % term_part),
                        index=False)
         term_id_offset += len(term_id)
-
     return term_id_offset_dict
 
 
@@ -182,10 +180,9 @@ def reindexer(source_data_dir, agg_count_dir, out_data_dir,
             for agg_part in term_agg_partitions:
                 tmp_f = os.path.join(source_data_dir,
                                      "count_%s_%s_%s.csv" % (agg_part,
-                                                             term_part,
-                                                             doc_part))
-                tmp_count = pd.read_csv(tmp_f, names=["doc_id", "term_id",
-                                                      "count"])
+                                                             doc_part,
+                                                             term_part))
+                tmp_count = pd.read_csv(tmp_f)
                 tmp_count = tmp_count.set_index(["doc_id", "term_id"])
                 tmp_count = tmp_count["count"]
                 count = count.add(tmp_count, fill_value=0)
@@ -193,8 +190,8 @@ def reindexer(source_data_dir, agg_count_dir, out_data_dir,
 
         else:
             count_f = os.path.join(source_data_dir,
-                                   "count_%s_%s.csv" % (term_part, doc_part))
-            count = pd.read_csv(count_f, names=["doc_id", "term_id", "count"])
+                                   "count_%s_%s.csv" % (doc_part, term_part))
+            count = pd.read_csv(count_f)
 
         # update term_id and doc_id based on term_id and doc_id partitions
         count["term_id"] += term_id_offset

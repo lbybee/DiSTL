@@ -63,7 +63,7 @@ def update_doc_partition(in_data_dir, out_data_dir, doc_part,
 
 def update_DTM(in_data_dir, out_data_dir, processes, doc_partitions,
                term_partitions, axis, update_methods_l,
-               update_methods_kwds_l=None, count_partitions=None):
+               update_methods_kwds_l=None):
     """applies a series of methods to the partitions along the given axis
 
     Parameters
@@ -84,9 +84,6 @@ def update_DTM(in_data_dir, out_data_dir, processes, doc_partitions,
         list of methods to apply to each partition
     update_methods_kwds_l : list or None
         key-words to pass to each update method
-    count_partitions : list or None
-        if None, this is a series of partitions over count files
-        (e.g. body, headline)
 
     Returns
     -------

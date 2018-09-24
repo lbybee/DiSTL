@@ -24,7 +24,7 @@ import json
 import os
 
 
-def _update_state(state, method_kwds, dependencies):
+def _update_state(state, task_label, method_kwds, dependencies):
     """updates the current state of the current task"""
 
     state[task_label] = {}
@@ -87,6 +87,12 @@ def runner(task_list, state_file):
         method_kwds = task["method_kwds"]
         dependencies = task["dependencies"]
 
+        # TODO maybe handle this externally
+        # create output directory if it doesn't exist
+        if "out_data_dir" in method_kwds:
+            if not os.path.exists(method_kwds["out_data_dir"]):
+                os.makedirs(method_kwds["out_data_dir"], exist_ok=True)
+
         # first check that all the dependencies of the task have run
         for dep in dependencies:
             if dep not in state:
@@ -97,13 +103,15 @@ def runner(task_list, state_file):
         # next check if the task has been run before
         if task_label not in state:
             method(**method_kwds)
-            state = _update_state(state, method_kwds, dependencies)
+            state = _update_state(state, task_label, method_kwds,
+                                  dependencies)
 
         # if the task has been run before, check whether the params have
         # changed
         elif state[task_label]["method_kwds"] != method_kwds:
             method(**method_kwds)
-            state = _update_state(state, method_kwds, dependencies)
+            state = _update_state(state, task_label, method_kwds,
+                                  dependencies)
 
         # if the params haven't changed, check whether the depencies have
         # changed
@@ -115,7 +123,8 @@ def runner(task_list, state_file):
                     chng = True
             if chng:
                 method(**method_kwds)
-                state = _update_state(state, method_kwds, dependencies)
+                state = _update_state(state, task_label, method_kwds,
+                                      dependencies)
 
         # write current state
         with open(state_file, "w") as fd:

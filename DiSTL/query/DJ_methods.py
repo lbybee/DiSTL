@@ -498,3 +498,45 @@ def gen_full_doc_sql(date, tag_drop_dict=None, headline_l=[],
         raise ValueError("unsupported agg_type: %s" % agg_type)
 
     return doc_sql, doc_id_sql
+
+
+def gen_term_sql(ngram, term_threshold_dict=None, stop_words_dict=None,
+                 regex_stop_words_dict=None):
+    """generates the query and term id for the provided params
+
+    Parameters
+    ----------
+    ngram : str
+        label for corresponding table
+    term_threshold_dict : dict of ints or None
+        dict where each key maps an ngram label to a term threshold
+    stop_words_dict : dict of lists or None
+        dict where each key maps an ngram label to a list of stop words
+    regex_stop_words_dict : dict of lists or None
+        dict where each key maps an ngram label to a list of regex stop words
+
+    Returns
+    -------
+    term query
+    """
+
+    # prep None kwds
+    if term_threshold_dict is None:
+        term_threshold_dict = {ngram: 0}
+    if stop_words_dict is None:
+        stop_words_dict = {ngram: []}
+    if regex_stop_words_dict is None:
+        regex_stop_words_dict = {ngram: []}
+
+    sql = """SELECT term_label,
+                    term_id,
+                    dense_rank() OVER(ORDER BY term_id) AS new_term_id
+                FROM term_%s
+                WHERE doc_count > %d
+                AND term_label NOT IN (%s)
+                AND term_label !~ %s
+          """ % (ngram, term_threshold_dict[ngram],
+                 ",".join(["'%s'" % w for w in stop_words_dict[ngram]]),
+                 "'.*(" + "|".join(regex_stop_words_dict[ngram]) + ").*'")
+
+    return sql

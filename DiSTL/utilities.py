@@ -1,82 +1,122 @@
-import multiprocessing
+"""
+these are a series of utilites for workflow management and provenance
+tracking.  The main method is runner which does the following things for
+each task in the list of provided tasks
+
+1. check whether the task has been run before, if not, run it
+
+2. if the task has been run, check whether its parameters have changed, if
+   they have then rerun the task
+
+3. check whether any of the tasks dependencies have been changed and if they
+   rerun the task
+
+All the information about the state of each task is stored in a state_file
+
+This mostly exists because I tried to use luigi:
+
+    https://github.com/spotify/luigi
+
+and I found it to add a lot of unecessary (for my usecase) abstraction.
+"""
+from datetime import datetime
+import json
 import os
 
 
-def DTM_checker(doc_partitions, term_partitions, count_partitions,
-                processes, out_data_dir, **kwds):
-    """a method for checking whether a series of files corresponding
-    to an updated DTM exist
+def _update_state(state, method_kwds, dependencies):
+    """updates the current state of the current task"""
+
+    state[task_label] = {}
+    state[task_label]["method_kwds"] = method_kwds
+    tstr = datetime.now().strftime("%Y%m%d%H%M%S")
+    state[task_label]["task_state"] = tstr
+    d_state = {dep: state[dep]["task_state"]
+               for dep in dependencies}
+    state[task_label]["dep_states"] = d_state
+    return state
+
+
+def runner(task_list, state_file):
+    """this is a method doing work-flow management/provenance tracking
 
     Parameters
     ----------
-    doc_partitions : list
-        list of partition labels for doc axis (e.g. dates)
-    term_partitions : list
-        list of partition labels for term axis (e.g. 1gram, 2gram)
-    count_partitions : list
-        list of partition labels for different count types (e.g. headline,
-        body)
-    processes : int
-        number of processes for multiprocessing pool
-    out_data_dir : str
-        location where output files will be stored
+    task_list : list
+        this is a list of tasks run in sequential order.  Each element
+        contains a dict with the following elements
+
+        1. label
+            name of task
+        2. method
+            function to run
+        3. method_kwds
+            key-words to pass to method
+        4. dependencies
+            list of labels for other tasks which are needed for the current
+            task to run
+
+    state_file : str
+        location of file where state info for each task is stored
 
     Returns
     -------
-    True if all files exist, false if not
-    """
+    None
 
-
-
-    # init multiprocessing pool
-    pool = multiprocessing.Pool(processes)
-
-    # check doc_id files
-    doc_paths = [os.path.join(out_data_dir, "doc_id_%s.csv" % doc_part)
-                 for doc_part in doc_partitions]
-    doc_state = sum(pool.map(os.path.exists, doc_paths))
-
-    # check term_id files
-    term_paths = [os.path.join(out_data_dir, "term_id_%s.csv" % term_part)
-                  for term_part in term_partitions]
-    term_state = sum(pool.map(os.path.exists, term_paths))
-
-    # check count files
-    count_paths = [os.path.join(out_data_dir,
-                                "count_%s_%s_%s.csv" % (doc_part,
-                                                        term_part,
-                                                        count_part))
-                   for doc_part in doc_partitions
-                   for term_part in term_partitions
-                   for count_part in count_partitions]
-    count_state = sum(pool.map(os.path.exists, count_paths))
-
-    return doc_state and term_state and count_state
-
-
-def DTM_runner(method, method_kwds):
-    """a wrapper for running DTM methods, this only runs the necessary code
-    if the resulting files don't already exist
-
-    Parameters
-    ----------
-    method : function
-        what is called if files don't exist
-    method_kwds : dict-like
-        key-words to pass to method
-
-    Returns
+    Updates
     -------
-    out_data_dir location
+    state_file
     """
 
-    out_data_dir = method_kwds["out_data_dir"]
-    if not os.path.exists(out_data_dir):
-        os.makedirs(out_data_dir, exist_ok=True)
+    # if the state file doesn't exist, init
+    if not os.path.exists(state_file):
+        state = {}
+        with open(state_file, "w") as fd:
+            json.dump(state, fd)
 
-    if DTM_checker(**method_kwds):
-        return out_data_dir
+    # iterate over steps
+    for task in task_list:
 
-    else:
-        method(**method_kwds)
-        return out_data_dir
+        # load current state
+        with open(state_file, "r") as fd:
+            state = json.load(fd)
+
+        # extract variables for clarity
+        task_label = task["label"]
+        method = task["method"]
+        method_kwds = task["method_kwds"]
+        dependencies = task["dependencies"]
+
+        # first check that all the dependencies of the task have run
+        for dep in dependencies:
+            if dep not in state:
+                ts = ("dependency: %s for task: %s hasn't run yet" %
+                      (dep, task_label))
+                raise ValueError(ts)
+
+        # next check if the task has been run before
+        if task_label not in state:
+            method(**method_kwds)
+            state = _update_state(state, method_kwds, dependencies)
+
+        # if the task has been run before, check whether the params have
+        # changed
+        elif state[task_label]["method_kwds"] != method_kwds:
+            method(**method_kwds)
+            state = _update_state(state, method_kwds, dependencies)
+
+        # if the params haven't changed, check whether the depencies have
+        # changed
+        else:
+            chng = False
+            for dep in dependencies:
+                if (state[task_label]["dep_states"][dep] !=
+                    state[dep]["task_state"]):
+                    chng = True
+            if chng:
+                method(**method_kwds)
+                state = _update_state(state, method_kwds, dependencies)
+
+        # write current state
+        with open(state_file, "w") as fd:
+            json.dump(state, fd)

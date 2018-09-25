@@ -62,11 +62,13 @@ run-code which defines the "one truth" for the state of an experiment:
 1 and 3 can be handled pretty easily, 2 probably requires more thought
 """
 from datetime import datetime
+import logging
+import smtplib
 import json
 import os
 
-
 def _update_state(state, task_label, method_kwds, dependencies):
+    """internal function for updating the state of the current task"""
 
     state[task_label] = {}
     state[task_label]["method_kwds"] = method_kwds
@@ -78,10 +80,28 @@ def _update_state(state, task_label, method_kwds, dependencies):
     return state
 
 
+def _send_email(task_label, log):
+    """internal function for sending log updates to a sepcified email"""
 
-def _method_wrapper(method, method_kwds, state, task_label, dependencies,
-                    create_out_dir=True, email_kwds=None,
-                    logging_kwds=None, provenance_kwds=None):
+    from .creds import password, email
+
+
+    message = """From: %s <%s>
+
+    %s
+    """ % (task_label, email, log)
+
+    server = smtplib.SMTP("smtp.gmail.com", 587)
+    server.starttls()
+    server.login(email, password)
+
+    server.sendmail(email, email, message)
+    server.quit()
+
+
+def _method_wrapper(method, method_kwds, state, log_dict, task_label,
+                    dependencies, create_out_dir=True, email=True,
+                    provenance_kwds=None):
     """a wrapper method handles the logging/provenance tracking/status
     for each method/task
 
@@ -100,12 +120,10 @@ def _method_wrapper(method, method_kwds, state, task_label, dependencies,
     create_out_dir : bool
         whether to create the output data directory if it is specified in
         method_kwds and doesn't exist
-    email_kwds : dict or None
-        key-words to pass to email method
-    logging_kwds : dict or None
-        key-words to pass to logging method
+    email : bool
+        whether or not to email logs
     provenance_kwds : dict or None
-        key-words to pass to provenance method
+        key-words to pass to provenance method, this TBA
 
     Returns
     -------
@@ -122,21 +140,58 @@ def _method_wrapper(method, method_kwds, state, task_label, dependencies,
         5. record provenance info
     """
 
+    # TODO pass logger into method
+
+    if provenance_kwds:
+        raise NotImplementedError("currently we don't do full provenance")
+
     # create output directory if it doesn't exist
     if "out_data_dir" in method_kwds:
         if not os.path.exists(method_kwds["out_data_dir"]):
             os.makedirs(method_kwds["out_data_dir"], exist_ok=True)
 
+    # for tracking runtime
+    t0 = datetime.now()
+
+    # init temporary logger
+    open("tmp.log", "w")
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s",
+                        datefmt="%Y-%m-%dT%H:%M:%S",
+                        filename="tmp.log")
+    logger = logging.getLogger(task_label)
+
+    # start log
+    logger.info("%s started" % task_label)
+
+    # email on start
+    with open("tmp.log", "r") as fd:
+        curr_log = fd.read()
+        log_dict[task_label] = curr_log
+        print("log", curr_log)
+    if email:
+        _send_email(task_label, curr_log)
+
     # run method
     method(**method_kwds)
+    t1 = datetime.now()
+    logger.info("%s finished" % task_label)
+    logger.info("runtime: %s" % str(t1 - t0))
 
     # update state
-    state = update_state(state, task_label, method_kwds, dependencies)
+    state = _update_state(state, task_label, method_kwds, dependencies)
 
-    return state
+    # email on finish
+    with open("tmp.log", "r") as fd:
+        curr_log = fd.read()
+        log_dict[task_label] = curr_log
+    if email:
+        _send_email(task_label, curr_log)
+
+    return state, log_dict
 
 
-def runner(task_list, state_file, method_wrapper_kwds=None):
+def runner(task_list, state_file, log_file, method_wrapper_kwds=None):
     """this is a method doing work-flow management/provenance tracking
 
     Parameters
@@ -157,6 +212,10 @@ def runner(task_list, state_file, method_wrapper_kwds=None):
 
     state_file : str
         location of file where state info for each task is stored
+    log_file : str
+        location of log file
+    method_wrapper_kwds : dict or None
+        key-words passed to _method_wrapper
 
     Returns
     -------
@@ -164,21 +223,32 @@ def runner(task_list, state_file, method_wrapper_kwds=None):
 
     Updates
     -------
-    state_file
+    state_file, log_file
     """
+
+    # create method_wrapper_kwds if None provided
+    if method_wrapper_kwds is None:
+        method_wrapper_kwds = {}
 
     # if the state file doesn't exist, init
     if not os.path.exists(state_file):
         state = {}
         with open(state_file, "w") as fd:
             json.dump(state, fd)
+    # if the log file doesn't exist, init
+    if not os.path.exists(log_file):
+        log_dict = {}
+        with open(log_file, "w") as fd:
+            json.dump(log_dict, fd)
 
     # iterate over steps
     for task in task_list:
 
-        # load current state
+        # load current state and log_dict
         with open(state_file, "r") as fd:
             state = json.load(fd)
+        with open(log_file, "r") as fd:
+            log_dict = json.load(fd)
 
         # extract variables for clarity
         task_label = task["label"]
@@ -195,14 +265,18 @@ def runner(task_list, state_file, method_wrapper_kwds=None):
 
         # next check if the task has been run before
         if task_label not in state:
-            state = _method_wrapper(method, method_kwds, state, task_label,
-                                    dependencies)
+            res = _method_wrapper(method, method_kwds, state, log_dict,
+                                  task_label, dependencies,
+                                  **method_wrapper_kwds)
+            state, log_dict = res
 
         # if the task has been run before, check whether the params have
         # changed
         elif state[task_label]["method_kwds"] != method_kwds:
-            state = _method_wrapper(method, method_kwds, state, task_label,
-                                    dependencies)
+            res = _method_wrapper(method, method_kwds, state, log_dict,
+                                  task_label, dependencies,
+                                  **method_wrapper_kwds)
+            state, log_dict = res
 
         # if the params haven't changed, check whether the depencies have
         # changed
@@ -213,9 +287,15 @@ def runner(task_list, state_file, method_wrapper_kwds=None):
                     state[dep]["task_state"]):
                     chng = True
             if chng:
-                state = _method_wrapper(method, method_kwds, state,
-                                        task_label, dependencies)
+                res = _method_wrapper(method, method_kwds, state, log_dict,
+                                      task_label, dependencies,
+                                      **method_wrapper_kwds)
+                state, log_dict = res
 
         # write current state
         with open(state_file, "w") as fd:
             json.dump(state, fd)
+
+        # write current log
+        with open(log_file, "w") as fd:
+            json.dump(log_dict, fd)

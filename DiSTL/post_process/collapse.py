@@ -40,7 +40,7 @@ def _sum_counts(doc_part, term_part, in_data_dir, out_data_dir):
 
 
 def collapse_wrapper(doc_partitions, term_partitions, count_partitions,
-                     processes, in_data_dir, out_data_dir):
+                     processes, in_data_dir, out_data_dir, **kwds):
     """aggregate a DTM over the count partitions
 
     Parameters

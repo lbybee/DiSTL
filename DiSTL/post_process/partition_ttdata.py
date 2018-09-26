@@ -138,7 +138,7 @@ def part_builder(tt_part_id, train_part, test_part, term_partitions,
 
 def tt_part_wrapper(doc_partitions, term_partitions, in_data_dir,
                     out_data_dir, rename_dict, processes, tt_part_count,
-                    read_csv_kwds):
+                    read_csv_kwds, **kwds):
     """wrapper to split the data into a series of training and test
     partitions
 

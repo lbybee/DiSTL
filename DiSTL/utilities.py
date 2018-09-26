@@ -67,12 +67,13 @@ import smtplib
 import json
 import os
 
+
 def _update_state(state, task_label, method_kwds, dependencies):
     """internal function for updating the state of the current task"""
 
     state[task_label] = {}
     state[task_label]["method_kwds"] = method_kwds
-    tstr = datetime.now().strftime("%Y%m%d%H%M%S")
+    tstr = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     state[task_label]["task_state"] = tstr
     d_state = {dep: state[dep]["task_state"]
                for dep in dependencies}
@@ -101,7 +102,7 @@ def _send_email(task_label, log):
 
 def _method_wrapper(method, method_kwds, state, log_dict, task_label,
                     dependencies, create_out_dir=True, email=True,
-                    provenance_kwds=None):
+                    pass_log=True, provenance_kwds=None):
     """a wrapper method handles the logging/provenance tracking/status
     for each method/task
 
@@ -122,6 +123,8 @@ def _method_wrapper(method, method_kwds, state, log_dict, task_label,
         method_kwds and doesn't exist
     email : bool
         whether or not to email logs
+    pass_log : bool
+        if true, pass the logger into the method
     provenance_kwds : dict or None
         key-words to pass to provenance method, this TBA
 
@@ -139,8 +142,6 @@ def _method_wrapper(method, method_kwds, state, log_dict, task_label,
         4. email log if desired
         5. record provenance info
     """
-
-    # TODO pass logger into method
 
     if provenance_kwds:
         raise NotImplementedError("currently we don't do full provenance")
@@ -161,6 +162,13 @@ def _method_wrapper(method, method_kwds, state, log_dict, task_label,
                         filename="tmp.log")
     logger = logging.getLogger(task_label)
 
+    # add logger for method if we want to pass it in
+    if pass_log:
+        t_method_kwds = dict(method_kwds)
+        t_method_kwds["logger"] = logger
+    else:
+        t_method_kwds = method_kwds
+
     # start log
     logger.info("%s started" % task_label)
 
@@ -168,15 +176,24 @@ def _method_wrapper(method, method_kwds, state, log_dict, task_label,
     with open("tmp.log", "r") as fd:
         curr_log = fd.read()
         log_dict[task_label] = curr_log
-        print("log", curr_log)
     if email:
         _send_email(task_label, curr_log)
 
-    # run method
-    method(**method_kwds)
-    t1 = datetime.now()
-    logger.info("%s finished" % task_label)
-    logger.info("runtime: %s" % str(t1 - t0))
+    # run method. on error: catch, email the log, and then fail
+    try:
+        method(**t_method_kwds)
+        t1 = datetime.now()
+        logger.info("%s finished" % task_label)
+        logger.info("runtime: %s" % str(t1 - t0))
+    except Exception as e:
+        t1 = datetime.now()
+        logging.exception("error")
+        logger.info("runtime: %s" % str(t1 - t0))
+        if email:
+            with open("tmp.log", "r") as fd:
+                curr_log = fd.read()
+            _send_email(task_label, curr_log)
+        raise e
 
     # update state
     state = _update_state(state, task_label, method_kwds, dependencies)

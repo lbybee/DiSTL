@@ -177,7 +177,7 @@ def _reset_doc_part(doc_part, doc_partitions, term_partitions,
 
 def reset_index_wrapper(doc_partitions, term_partitions, tmp_length_file,
                         processes, in_data_dir, out_data_dir,
-                        count_partitions=None):
+                        count_partitions=None, **kwds):
     """reset the indices of a DTM that may have been manipulated by other
     operations
 

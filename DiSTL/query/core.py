@@ -1,3 +1,7 @@
+"""
+these are the core methods for building a basic DTM from the databse
+"""
+
 from datetime import datetime
 import multiprocessing
 import psycopg2
@@ -189,7 +193,7 @@ def doc_count_query(doc_part, db_kwds, schema, out_data_dir,
 def query_wrapper(doc_partitions, term_partitions, count_partitions, db_kwds,
                   schema, doc_columns, term_columns, count_columns, processes,
                   out_data_dir, gen_full_doc_sql_kwds, gen_term_sql_kwds,
-                  log_file):
+                  log_file, **kwds):
     """runs a query on the text database to build a DTM
 
     Parameters

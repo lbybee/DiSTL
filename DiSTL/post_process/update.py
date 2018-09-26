@@ -133,7 +133,7 @@ def update_doc_partition(in_data_dir, out_data_dir, doc_part,
 
 def update_core(in_data_dir, out_data_dir, processes, doc_partitions,
                 term_partitions, axis, update_method,
-                update_method_kwds=None, alt_id_depend=False):
+                update_method_kwds=None, alt_id_depend=False, **kwds):
     """applies the provided update method to the partitions along the given
     axis
 

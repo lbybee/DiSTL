@@ -1,3 +1,4 @@
+import dask.dataframe as dd
 import pandas as pd
 import multiprocessing
 import os
@@ -30,7 +31,8 @@ def _map_count(count, term_id_map, doc_id_map):
     return count
 
 
-def _load_term_id_map(term_partitions, in_data_dir, out_data_dir):
+def _load_term_id_map(term_partitions, in_data_dir, out_data_dir,
+                      u_term_id):
     """loads the term ids from input dict and returns the term_id_map
 
     Parameters
@@ -41,6 +43,8 @@ def _load_term_id_map(term_partitions, in_data_dir, out_data_dir):
         location of input files
     out_data_dir : str
         location of output files
+    u_term_id : pd series
+        series of unique term ids which still have counts
 
     Returns
     -------
@@ -57,6 +61,9 @@ def _load_term_id_map(term_partitions, in_data_dir, out_data_dir):
     for term_part in term_partitions:
         term_f = os.path.join(in_data_dir, "term_id_%s.csv" % term_part)
         term_id = pd.read_csv(term_f)
+
+        # constrain to count term_ids
+        term_id = term_id[term_id["term_id"].isin(u_term_id)]
 
         # generate map from old term id to new term id
         term_id_map = term_id[["term_id"]]
@@ -75,7 +82,7 @@ def _load_term_id_map(term_partitions, in_data_dir, out_data_dir):
     return term_map_dict
 
 
-def _gen_doc_id_length(doc_part, in_data_dir, tmp_length_file):
+def _gen_doc_id_length(doc_part, in_data_dir, tmp_length_file, u_doc_id):
     """generates the length of each doc id and writes to a temporary file
 
     Parameters
@@ -86,6 +93,8 @@ def _gen_doc_id_length(doc_part, in_data_dir, tmp_length_file):
         location of input files
     tmp_length_file : str
         location where temporary length file is tored
+    u_doc_id : pd series
+        unique doc ids which have a count
 
     Returns
     -------
@@ -94,6 +103,10 @@ def _gen_doc_id_length(doc_part, in_data_dir, tmp_length_file):
 
     doc_f = os.path.join(in_data_dir, "doc_id_%s.csv" % doc_part)
     doc_id = pd.read_csv(doc_f)
+
+    # constrain to count doc_ids
+    doc_id = doc_id[doc_id["doc_id"].isin(u_doc_id)]
+
     count = len(doc_id)
 
     with open(tmp_length_file, "a") as fd:
@@ -102,7 +115,7 @@ def _gen_doc_id_length(doc_part, in_data_dir, tmp_length_file):
 
 def _reset_doc_part(doc_part, doc_partitions, term_partitions,
                     count_partitions, in_data_dir, out_data_dir,
-                    tmp_length_file, term_id_map):
+                    tmp_length_file, u_doc_id, term_id_map):
     """resets the doc_id for the specified partition and maps the
     new doc_ids to the counts (so reset the indices for an entire doc_part
 
@@ -122,6 +135,8 @@ def _reset_doc_part(doc_part, doc_partitions, term_partitions,
         location of output files
     tmp_length_file : str
         location where temporary length file is tored
+    u_doc_id : pd series
+        unique doc ids which have a count
     term_id_map : dictionary
         dict mapping term_part to term ids which contain term id map
 
@@ -142,9 +157,12 @@ def _reset_doc_part(doc_part, doc_partitions, term_partitions,
     agg_length = agg_length.loc[doc_partitions[:doc_ind]]
     doc_id_offset = agg_length["length"].sum()
 
-    # process doc_id and gen doc_id_map
+    # process doc_id
     doc_f = os.path.join(in_data_dir, "doc_id_%s.csv" % doc_part)
     doc_id = pd.read_csv(doc_f)
+    # constrain to count doc_ids
+    doc_id = doc_id[doc_id["doc_id"].isin(u_doc_id)]
+    # gen doc_id_map
     doc_id_map = doc_id[["doc_id"]]
     doc_id_map = doc_id_map.reset_index(drop=True)
     doc_id_map["new_doc_id"] = doc_id_map.index + doc_id_offset
@@ -214,21 +232,28 @@ def reset_index_wrapper(doc_partitions, term_partitions, tmp_length_file,
     if count_partitions is None:
         count_partitions = []
 
+    # prep lists of remaining doc_ids and term_ids (this is because some
+    # counts may have dropped eliminating certain docs/terms
+    counts = dd.read_csv(os.path.join(in_data_dir, "count_*.csv"),
+                         blocksize=None)
+    u_doc_id = counts["doc_id"].drop_duplicates().compute()
+    u_term_id = counts["term_id"].drop_duplicates().compute()
+
     # initialize pool
     pool = multiprocessing.Pool(processes)
 
     # get id lengths for doc_ids
     pool.starmap(_gen_doc_id_length, [(doc_part, in_data_dir,
-                                       tmp_length_file)
+                                       tmp_length_file, u_doc_id)
                                       for doc_part in doc_partitions])
 
     # load term id map and reset term ids
     term_id_map = _load_term_id_map(term_partitions, in_data_dir,
-                                    out_data_dir)
+                                    out_data_dir, u_term_id)
 
     # reset doc ids and apply new doc/term ids to counts
     pool.starmap(_reset_doc_part,
                  [(doc_part, doc_partitions, term_partitions,
                    count_partitions, in_data_dir, out_data_dir,
-                   tmp_length_file, term_id_map)
+                   tmp_length_file, u_doc_id, term_id_map)
                   for doc_part in doc_partitions])

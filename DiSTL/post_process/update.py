@@ -2,6 +2,7 @@ from .utilities import _copy_id
 import dask.dataframe as dd
 import pandas as pd
 import multiprocessing
+import dask
 import os
 
 
@@ -125,8 +126,8 @@ def update_doc_partition(in_data_dir, out_data_dir, doc_part,
     doc_f = os.path.join(out_data_dir, "doc_id_%s.csv" % doc_part)
     doc_id.to_csv(doc_f, index=False)
 
-    count_f_l = [os.path.join(in_data_dir, "count_%s_%s.csv" % (doc_part,
-                                                                term_part))
+    count_f_l = [os.path.join(out_data_dir, "count_%s_%s.csv" % (doc_part,
+                                                                 term_part))
                  for term_part in term_partitions]
     counts.to_csv(count_f_l)
 
@@ -192,7 +193,8 @@ def update_core(in_data_dir, out_data_dir, processes, doc_partitions,
 
     if alt_id_depend:
         alt_id = dd.read_csv(os.path.join(in_data_dir, alt_pattern % "*"),
-                             block_size=None)
+                             blocksize=None, assume_missing=True)
+        alt_id = dask.persist(alt_id)[0]
     else:
         alt_id = None
 

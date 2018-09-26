@@ -136,6 +136,129 @@ def part_builder(tt_part_id, train_part, test_part, term_partitions,
                 rename_dict=rename_dict)
 
 
+def gen_multi_tt_part(doc_partitions, term_partitions, in_data_dir,
+                      out_data_dir, rename_dict, read_csv_kwds, processes,
+                      tt_part_count):
+    """generates a series of training/test partitions from the DTM based
+    on the tt_part_count
+
+    Parameters
+    ----------
+    doc_partitions : list
+        list of doc parts
+    term_partitions : list
+        list of term parts
+    in_data_dir : str
+        location of input files
+    out_data_dir : str
+        location of output files
+    rename_dict : dict
+        dictionary mapping current columsn to new columns, the values are
+        used as the covars to keep
+    read_csv_kwds : dict or None
+        key-words to pass to covar dd csv reader
+    tt_part_count : int
+        number of training/test partitions
+    processes : int
+        number of processes for multiprocessing pool
+
+    Returns
+    -------
+    None
+
+    Writes
+    ------
+    collapses training test partition files
+    """
+
+    # init pool
+    pool = multiprocessing.Pool(processes)
+
+    # prep partitions
+    doc_partitions.sort()
+    stp_size = int(len(doc_partitions) / tt_part_count)
+    testing_partitions = []
+    training_partitions = []
+    for k in range(1, tt_part_count - 1):
+        tmp = doc_partitions[(k * stp_size):((k + 1) * stp_size)]
+        test_partitions.append(tmp)
+        training_partitions.append(doc_partitions[:(k * stp_size)] +
+                                   doc_partitions[((k + 1) * stp_size):])
+    testing_partitions.append(doc_partitions[(tt_part_count * stp_size):])
+    training_partitions.append(doc_partitions[:(tt_part_count * stp_size)])
+
+    # build partitions
+    pool.starmap(part_builder,
+                 [(k, part[0], part[1], term_partitions, in_data_dir,
+                   out_data_dir, read_csv_kwds, rename_dict)
+                  for k, part in enumerate(zip(train_partitions,
+                                               test_partitions))])
+
+
+def gen_single_tt_part(doc_partitions, term_partitions, in_data_dir,
+                       out_data_dir, rename_dict, read_csv_kwds,
+                       tt_test_part_prop, tt_part_loc):
+    """generates a single training/test partition from the DTM based on
+    the tt_part_prop and tt_part_loc
+
+    Parameters
+    ----------
+    doc_partitions : list
+        list of doc parts
+    term_partitions : list
+        list of term parts
+    in_data_dir : str
+        location of input files
+    out_data_dir : str
+        location of output files
+    rename_dict : dict
+        dictionary mapping current columsn to new columns, the values are
+        used as the covars to keep
+    read_csv_kwds : dict or None
+        key-words to pass to covar dd csv reader
+    tt_test_part_prop : float
+        proportion of sample to include in test vs training partition
+    tt_test_part_loc : str
+        where to put test partition:
+
+        1. start
+        2. end
+        3. middle
+
+    Returns
+    -------
+    None
+
+    Writes
+    ------
+    collapses training test partition files
+    """
+
+    # prep partitions
+    doc_partitions.sort()
+    Dp = len(doc_partitions)
+    test_part_size = int(tt_test_part_prop * Dp)
+
+
+    if tt_part_loc == "start":
+        training_partitions = doc_partitions[test_part_size:]
+        test_partitions = doc_partitions[:test_part_size]
+    elif tt_part_loc == "end":
+        training_partitions = doc_partitions[:(Dp - test_part_size)]
+        test_partitions = doc_partitions[(Dp - test_part_size):]
+    elif tt_part_loc == "middle":
+        mid_low = int((Dp - tt_part_loc) / 2.)
+        mid_high = int((Dp + tt_part_loc) / 2.)
+        training_partitions = (doc_partitions[:mid_low] +
+                               doc_partitions[mid_high:])
+        test_partitions = doc_partitions[mid_low:mid_high]
+    else:
+        raise ValueError("tt_part_loc: %s unsupported")
+
+    part_builder(0, train_partitions, test_partitions, term_partitions,
+                 in_data_dir, out_data_dir, read_csv_kwds, rename_dict)
+
+
 def tt_part_wrapper(doc_partitions, term_partitions, in_data_dir,
                     out_data_dir, rename_dict, processes, tt_part_count,
                     read_csv_kwds, **kwds):
@@ -170,26 +293,3 @@ def tt_part_wrapper(doc_partitions, term_partitions, in_data_dir,
     ------
     collapses training test partition files
     """
-
-    # init pool
-    pool = multiprocessing.Pool(processes)
-
-    # prep partitions
-    doc_partitions.sort()
-    stp_size = int(len(doc_partitions) / tt_part_count)
-    testing_partitions = []
-    training_partitions = []
-    for k in range(1, tt_part_count - 1):
-        tmp = doc_partitions[(k * stp_size):((k + 1) * stp_size)]
-        test_partitions.append(tmp)
-        training_partitions.append(doc_partitions[:(k * stp_size)] +
-                                   doc_partitions[((k + 1) * stp_size):])
-    testing_partitions.append(doc_partitions[(tt_part_count * stp_size):])
-    training_partitions.append(doc_partitions[:(tt_part_count * stp_size)])
-
-    # build partitions
-    pool.starmap(part_builder,
-                 [(k, part[0], part[1], term_partitions, in_data_dir,
-                   out_data_dir, read_csv_kwds, rename_dict)
-                  for k, part in enumerate(zip(train_partitions,
-                                               test_partitions))])

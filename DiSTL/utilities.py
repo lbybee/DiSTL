@@ -208,7 +208,8 @@ def _method_wrapper(method, method_kwds, state, log_dict, task_label,
     return state, log_dict
 
 
-def runner(task_list, state_file, log_file, method_wrapper_kwds=None):
+def runner(task_list, state_file, log_file, testing=False,
+           method_wrapper_kwds=None):
     """this is a method doing work-flow management/provenance tracking
 
     Parameters
@@ -231,6 +232,9 @@ def runner(task_list, state_file, log_file, method_wrapper_kwds=None):
         location of file where state info for each task is stored
     log_file : str
         location of log file
+    testing : bool
+        indicator for whether this is a real or test run, if test run
+        we just call the methods and don't track/update states
     method_wrapper_kwds : dict or None
         key-words passed to _method_wrapper
 
@@ -242,6 +246,16 @@ def runner(task_list, state_file, log_file, method_wrapper_kwds=None):
     -------
     state_file, log_file
     """
+
+    # if we're doing a testing pass don't do anything else
+    if testing:
+
+        for task in task_list:
+            method = task["method"]
+            method_kwds = task["method_kwds"]
+            method(**method_kwds)
+
+        return None
 
     # create method_wrapper_kwds if None provided
     if method_wrapper_kwds is None:

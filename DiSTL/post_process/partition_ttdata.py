@@ -112,32 +112,36 @@ def part_builder(tt_part_id, train_part, test_part, term_partitions,
     """
 
     # train counts
-    prep_counts([os.path.join(data_dir, "count_%s_%s.csv" % (n, d))
-                 for d in train_part for n in ngrams],
-                os.path.join(julia_dir, "%d_train_counts.csv" % tt_part_id))
+    prep_counts([os.path.join(in_data_dir, "count_%s_%s.csv" % (d, n))
+                 for d in train_part for n in term_partitions],
+                os.path.join(out_data_dir,
+                             "%d_train_counts.csv" % tt_part_id))
 
     # test counts
-    prep_counts([os.path.join(data_dir, "count_%s_%s.csv" % (n, d))
-                 for d in test_part for n in ngrams],
-                os.path.join(julia_dir, "%d_test_counts.csv" % tt_part_id))
+    prep_counts([os.path.join(in_data_dir, "count_%s_%s.csv" % (d, n))
+                 for d in test_part for n in term_partitions],
+                os.path.join(out_data_dir,
+                             "%d_test_counts.csv" % tt_part_id))
 
     # train covars
-    prep_covars([os.path.join(data_dir, "doc_id_%s.csv" % d)
+    prep_covars([os.path.join(in_data_dir, "doc_id_%s.csv" % d)
                  for d in train_part],
-                os.path.join(julia_dir, "%d_train_covars.csv" % tt_part_id),
+                os.path.join(out_data_dir,
+                             "%d_train_covars.csv" % tt_part_id),
                 read_csv_kwds=read_csv_kwds,
                 rename_dict=rename_dict)
 
     # test covars
-    prep_covars([os.path.join(data_dir, "doc_id_%s.csv" % d)
+    prep_covars([os.path.join(in_data_dir, "doc_id_%s.csv" % d)
                  for d in test_part],
-                os.path.join(julia_dir, "%d_test_covars.csv" % tt_part_id),
+                os.path.join(out_data_dir,
+                             "%d_test_covars.csv" % tt_part_id),
                 read_csv_kwds=read_csv_kwds,
                 rename_dict=rename_dict)
 
 
 def gen_multi_tt_part(doc_partitions, term_partitions, in_data_dir,
-                      out_data_dir, rename_dict, read_csv_kwds, processes,
+                      out_data_dir, rename_dict, read_csv_kwds,
                       tt_part_count):
     """generates a series of training/test partitions from the DTM based
     on the tt_part_count
@@ -159,8 +163,6 @@ def gen_multi_tt_part(doc_partitions, term_partitions, in_data_dir,
         key-words to pass to covar dd csv reader
     tt_part_count : int
         number of training/test partitions
-    processes : int
-        number of processes for multiprocessing pool
 
     Returns
     -------
@@ -171,28 +173,24 @@ def gen_multi_tt_part(doc_partitions, term_partitions, in_data_dir,
     collapses training test partition files
     """
 
-    # init pool
-    pool = multiprocessing.Pool(processes)
-
     # prep partitions
     doc_partitions.sort()
     stp_size = int(len(doc_partitions) / tt_part_count)
-    testing_partitions = []
-    training_partitions = []
+    test_partitions = []
+    train_partitions = []
     for k in range(1, tt_part_count - 1):
         tmp = doc_partitions[(k * stp_size):((k + 1) * stp_size)]
         test_partitions.append(tmp)
-        training_partitions.append(doc_partitions[:(k * stp_size)] +
-                                   doc_partitions[((k + 1) * stp_size):])
-    testing_partitions.append(doc_partitions[(tt_part_count * stp_size):])
-    training_partitions.append(doc_partitions[:(tt_part_count * stp_size)])
+        train_partitions.append(doc_partitions[:(k * stp_size)] +
+                                doc_partitions[((k + 1) * stp_size):])
+    test_partitions.append(doc_partitions[(tt_part_count * stp_size):])
+    train_partitions.append(doc_partitions[:(tt_part_count * stp_size)])
 
     # build partitions
-    pool.starmap(part_builder,
-                 [(k, part[0], part[1], term_partitions, in_data_dir,
-                   out_data_dir, read_csv_kwds, rename_dict)
-                  for k, part in enumerate(zip(train_partitions,
-                                               test_partitions))])
+    for k, part in enumerate(zip(train_partitions, test_partitions)):
+        train_part, test_part = part
+        part_builder(k, train_part, test_part, term_partitions, in_data_dir,
+                     out_data_dir, read_csv_kwds, rename_dict)
 
 
 def gen_single_tt_part(doc_partitions, term_partitions, in_data_dir,
@@ -241,16 +239,16 @@ def gen_single_tt_part(doc_partitions, term_partitions, in_data_dir,
 
 
     if tt_part_loc == "start":
-        training_partitions = doc_partitions[test_part_size:]
+        train_partitions = doc_partitions[test_part_size:]
         test_partitions = doc_partitions[:test_part_size]
     elif tt_part_loc == "end":
-        training_partitions = doc_partitions[:(Dp - test_part_size)]
+        train_partitions = doc_partitions[:(Dp - test_part_size)]
         test_partitions = doc_partitions[(Dp - test_part_size):]
     elif tt_part_loc == "middle":
-        mid_low = int((Dp - tt_part_loc) / 2.)
-        mid_high = int((Dp + tt_part_loc) / 2.)
-        training_partitions = (doc_partitions[:mid_low] +
-                               doc_partitions[mid_high:])
+        mid_low = int((Dp - test_part_size) / 2.)
+        mid_high = int((Dp + test_part_size) / 2.)
+        train_partitions = (doc_partitions[:mid_low] +
+                            doc_partitions[mid_high:])
         test_partitions = doc_partitions[mid_low:mid_high]
     else:
         raise ValueError("tt_part_loc: %s unsupported")
@@ -260,8 +258,8 @@ def gen_single_tt_part(doc_partitions, term_partitions, in_data_dir,
 
 
 def tt_part_wrapper(doc_partitions, term_partitions, in_data_dir,
-                    out_data_dir, rename_dict, processes, tt_part_count,
-                    read_csv_kwds, **kwds):
+                    out_data_dir, rename_dict, read_csv_kwds, tt_part_count,
+                    tt_test_part_prop=None, tt_part_loc=None, **kwds):
     """wrapper to split the data into a series of training and test
     partitions
 
@@ -278,12 +276,10 @@ def tt_part_wrapper(doc_partitions, term_partitions, in_data_dir,
     rename_dict : dict
         dictionary mapping current columsn to new columns, the values are
         used as the covars to keep
-    processes : int
-        number of processes for multiprocessing pool
-    tt_part_count : int
-        number of training/test partitions
     read_csv_kwds : dict or None
         key-words to pass to covar dd csv reader
+    tt_part_count : int
+        number of training/test partitions
 
     Returns
     -------
@@ -293,3 +289,20 @@ def tt_part_wrapper(doc_partitions, term_partitions, in_data_dir,
     ------
     collapses training test partition files
     """
+
+    if tt_part_count > 1:
+        gen_multi_tt_part(doc_partitions, term_partitions, in_data_dir,
+                          out_data_dir, rename_dict, read_csv_kwds,
+                          tt_part_count)
+
+    elif tt_part_count == 1:
+        if tt_test_part_prop is None or tt_part_loc is None:
+            raise ValueError("tt_test_part_prop and tt_part_loc can't be " +
+                             "None if tt_part_count == 1")
+        else:
+            gen_single_tt_part(doc_partitions, term_partitions, in_data_dir,
+                               out_data_dir, rename_dict, read_csv_kwds,
+                               tt_test_part_prop, tt_part_loc)
+
+    else:
+        raise ValueError("unsupported tt_part_count: %d" % tt_part_count)

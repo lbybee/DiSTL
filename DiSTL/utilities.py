@@ -86,7 +86,6 @@ def _send_email(task_label, log):
 
     from .creds import password, email
 
-
     message = """From: %s <%s>
 
     %s

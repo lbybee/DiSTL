@@ -257,3 +257,6 @@ def reset_index_wrapper(doc_partitions, term_partitions, tmp_length_file,
                    count_partitions, in_data_dir, out_data_dir,
                    tmp_length_file, u_doc_id, term_id_map)
                   for doc_part in doc_partitions])
+
+    # close pool
+    pool.close()

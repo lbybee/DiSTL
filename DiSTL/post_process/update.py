@@ -64,10 +64,10 @@ def update_term_partition(in_data_dir, out_data_dir, term_part,
     term_f = os.path.join(out_data_dir, "term_id_%s.csv" % term_part)
     term_id.to_csv(term_f, index=False)
 
-    count_f_l = [os.path.join(in_data_dir, "count_%s_%s.csv" % (doc_part,
-                                                                term_part))
+    count_f_l = [os.path.join(out_data_dir, "count_%s_%s.csv" % (doc_part,
+                                                                 term_part))
                  for doc_part in doc_partitions]
-    counts.to_csv(count_f_l)
+    counts.to_csv(count_f_l, index=False)
 
 
 def update_doc_partition(in_data_dir, out_data_dir, doc_part,
@@ -129,7 +129,7 @@ def update_doc_partition(in_data_dir, out_data_dir, doc_part,
     count_f_l = [os.path.join(out_data_dir, "count_%s_%s.csv" % (doc_part,
                                                                  term_part))
                  for term_part in term_partitions]
-    counts.to_csv(count_f_l)
+    counts.to_csv(count_f_l, index=False)
 
 
 def update_core(in_data_dir, out_data_dir, processes, doc_partitions,
@@ -176,9 +176,6 @@ def update_core(in_data_dir, out_data_dir, processes, doc_partitions,
     if update_method_kwds is None:
         update_method_kwds = {}
 
-    # init pool
-    pool = multiprocessing.Pool(processes)
-
     # determine partitions to loop over
     if axis:
         main_partitions = term_partitions
@@ -194,17 +191,37 @@ def update_core(in_data_dir, out_data_dir, processes, doc_partitions,
     if alt_id_depend:
         alt_id = dd.read_csv(os.path.join(in_data_dir, alt_pattern % "*"),
                              blocksize=None, assume_missing=True)
-        alt_id = dask.persist(alt_id)[0]
     else:
         alt_id = None
 
-    # update each main part
-    pool.starmap(update_partition,
-                 [(in_data_dir, out_data_dir, main_part, alt_partitions,
-                   update_method, update_method_kwds, alt_id)
-                  for main_part in main_partitions])
+    if processes > 1:
 
-    # copy alternative partition files
-    pool.starmap(_copy_id,
-                 [(alt_pattern % alt_part, in_data_dir, out_data_dir)
-                  for alt_part in alt_partitions])
+        # persist to pass into parallel
+        if alt_id_depend:
+            alt_id = dask.persist(alt_id)[0]
+
+        # init pool
+        pool = multiprocessing.Pool(processes)
+
+        # update each main part
+        pool.starmap(update_partition,
+                     [(in_data_dir, out_data_dir, main_part, alt_partitions,
+                       update_method, update_method_kwds, alt_id)
+                      for main_part in main_partitions])
+
+        # copy alternative partition files
+        pool.starmap(_copy_id,
+                     [(alt_pattern % alt_part, in_data_dir, out_data_dir)
+                      for alt_part in alt_partitions])
+
+        # close pool
+        pool.close()
+
+    else:
+        for main_part in main_partitions:
+            update_partition(in_data_dir, out_data_dir, main_part,
+                             alt_partitions, update_method,
+                             update_method_kwds, alt_id)
+
+        for alt_part in alt_partitions:
+            _copy_id(alt_pattern % alt_part, in_data_dir, out_data_dir)

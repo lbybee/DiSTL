@@ -89,3 +89,6 @@ def collapse_wrapper(doc_partitions, term_partitions, count_partitions,
                              out_data_dir) for doc_part in doc_partitions])
     pool.starmap(_copy_id, [("term_id_%s.csv" % term_part, in_data_dir,
                              out_data_dir) for term_part in term_partitions])
+
+    # close the pool
+    pool.close()

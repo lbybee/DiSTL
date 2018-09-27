@@ -274,3 +274,6 @@ def query_wrapper(doc_partitions, term_partitions, count_partitions, db_kwds,
     pool.starmap(drop_temp_term_table,
                  [(term_part, db_kwds, schema) for term_part in
                   term_partitions])
+
+    # close pool
+    pool.close()

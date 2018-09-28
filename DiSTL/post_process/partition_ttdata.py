@@ -68,10 +68,8 @@ def prep_covars(in_f_pattern, out_f_pattern, read_csv_kwds=None,
         read_csv_kwds = {}
 
     covars = dd.read_csv(in_f_pattern, **read_csv_kwds)
-    del_covars = covars.to_delayed()
-    del_covars = [delayed(_del_sort)(c) for c in del_covars]
-    covars = dd.from_delayed(del_covars)
     covars = covars.compute()
+    covars = covars.sort_values("doc_id")
     if rename_dict:
         covars = covars.rename(columns=rename_dict)
         covars = covars[[v for v in rename_dict.values()]]

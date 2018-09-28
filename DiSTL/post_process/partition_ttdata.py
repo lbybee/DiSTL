@@ -176,7 +176,7 @@ def gen_multi_tt_part(doc_partitions, term_partitions, in_data_dir,
     stp_size = int(len(doc_partitions) / tt_part_count)
     test_partitions = []
     train_partitions = []
-    for k in range(1, tt_part_count - 1):
+    for k in range(tt_part_count - 1):
         tmp = doc_partitions[(k * stp_size):((k + 1) * stp_size)]
         test_partitions.append(tmp)
         train_partitions.append(doc_partitions[:(k * stp_size)] +

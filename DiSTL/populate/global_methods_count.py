@@ -1,9 +1,11 @@
 from .global_methods_general import tokenizer, vocab_cleaner, \
                                     default_lemmatizer
 from datetime import datetime
+import .NYT_methods_count as NYTc
+import .DJ_methods_count as DJc
 import dask.dataframe as dd
-import pandas as pd
 import multiprocessing
+import pandas as pd
 import os
 
 
@@ -204,7 +206,7 @@ def unigram_tag_wrapper(processes, in_data_dir, tmp_dir, out_count_dir,
                         log_file, raw_files, txt_labels, term_columns,
                         term_groupby_col, term_index_name, tag_columns,
                         tag_groupby_col, tag_index_name,
-                        unigram_tag_file_processor):
+                        file_processor_label):
     """generates the aggregate count file for the unigram terms as well as
     tags from raw data
 
@@ -230,13 +232,20 @@ def unigram_tag_wrapper(processes, in_data_dir, tmp_dir, out_count_dir,
         column label on which to group by for aggregate
     <term/tag>_index_name : str
         name for index
-    unigram_tag_file_processor : function
-        function for building temporary unigram/tag files
+    data_type : str
+        label for file processor used for this run
 
     Returns
     -------
     None
     """
+
+    if data_type == "DJ":
+        unigram_tag_file_processor = DJc.unigram_tag_file_processor
+    elif data_type == "NYT":
+        unigram_tag_file_processor = NYTc.unigram_tag_file_processor
+    else:
+        raise ValueError("Unsupported data_type %s" % data_type)
 
     term_f_label_l = ["%s_1gram" % l for l in txt_labels]
 
@@ -274,7 +283,7 @@ def ngram_wrapper(n, processes, doc_lthresh, in_data_dir, tmp_dir,
                   out_count_dir, stop_word_files, regex_stop_word_files,
                   log_file, raw_files, txt_labels,
                   term_columns, term_groupby_col, term_index_name,
-                  ngram_file_processor):
+                  file_processor_label):
     """generates the aggregate count file for the ngram terms fro raw data
 
     Parameters
@@ -307,13 +316,20 @@ def ngram_wrapper(n, processes, doc_lthresh, in_data_dir, tmp_dir,
         column label on which to group by for aggregate
     term_index_name : str
         name for index
-    ngram_file_processor : function
-        function for building temporary ngram files
+    data_type : str
+        label for file processor used for this run
 
     Returns
     -------
     None
     """
+
+    if data_type == "DJ":
+        ngram_file_processor = DJc.ngram_file_processor
+    elif data_type == "NYT":
+        ngram_file_processor = NYTc.ngram_file_processor
+    else:
+        raise ValueError("Unsupported data_type %s" % data_type)
 
     unigram_map_files = [os.path.join(out_count_dir, "%s_1gram.csv" % l)
                          for l in txt_labels]

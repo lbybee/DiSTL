@@ -175,9 +175,7 @@ def gen_article_doc_sql(doc_sql, threshold=0):
     doc query
     """
 
-    sql = """SELECT doc_id,
-                    display_date,
-                    accession_number,
+    sql = """SELECT *,
                     dense_rank() OVER(ORDER BY doc_id) AS new_doc_id
                 FROM (%s) AS tmp_doc
                 WHERE (headline_term_count + body_term_count) > %d
@@ -199,6 +197,25 @@ def gen_article_doc_id_sql(doc_sql):
     """
 
     sql = """SELECT display_date, accession_number, new_doc_id
+                FROM (%s) as tmp_doc
+          """ % doc_sql
+    return sql
+
+
+def gen_ticker_article_doc_id_sql(doc_sql):
+    """generate the query needed to write the article doc id info to a csv
+
+    Parameters
+    ----------
+    doc_sql : str
+        current sql query
+
+    Returns
+    -------
+    doc id query
+    """
+
+    sql = """SELECT tag_label, display_date, accession_number, new_doc_id
                 FROM (%s) as tmp_doc
           """ % doc_sql
     return sql
@@ -485,6 +502,10 @@ def gen_full_doc_sql(date, tag_drop_dict=None, headline_l=[],
     elif agg_type == "day":
         doc_sql = gen_day_doc_sql(sql, agg_threshold)
         doc_id_sql = gen_day_doc_id_sql(doc_sql)
+
+    elif agg_type == "ticker_article":
+        doc_sql = gen_article_doc_sql(sql, agg_threshold)
+        doc_id_sql = gen_ticker_article_doc_id_sql(doc_sql)
 
     elif agg_type == "ticker_day":
         doc_sql = gen_ticker_day_doc_sql(sql, agg_threshold)

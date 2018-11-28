@@ -1,4 +1,6 @@
 from datetime import datetime
+import .NYT_methods_database as NYTd
+import .DJ_methods_database as DJd
 import multiprocessing
 import psycopg2
 import os
@@ -128,7 +130,7 @@ def populate_partition(db, schema, link_labels, count_labels,
 
 def database_wrapper(db, schema, processes, term_lables,
                      tag_labels, count_labels, link_lables, partitions,
-                     table_dir, sql_dir, log_file):
+                     table_dir, sql_dir, log_file, write_sql_kwds=None):
     """populates the database for the given input
 
     Parameters
@@ -160,6 +162,18 @@ def database_wrapper(db, schema, processes, term_lables,
     -------
     None
     """
+
+    if data_type == "DJ":
+        write_sql = DJd.write_sql
+    elif data_type == "NYT":
+        write_sql = NYTd.write_sql
+    else:
+        raise ValueError("Unsupported data_type: %s" % data_type)
+
+    if write_sql_kwds is None:
+        write_sql_kwds = {}
+
+    write_sql(sql_dir, **write_sql_dir)
 
     create_schema(db, schema)
 

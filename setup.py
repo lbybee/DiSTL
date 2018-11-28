@@ -8,5 +8,3 @@ setup(name="DiSTL.query",
       packages=["DiSTL.query"])
 setup(name="DiSTL.post_process",
       packages=["DiSTL.post_process"])
-setup(name="DiSTL.tasks",
-      packages=["DiSTL.tasks"])

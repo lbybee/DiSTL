@@ -1,6 +1,8 @@
 from .global_methods_general import tokenizer, vocab_cleaner, \
                                     default_lemmatizer
 from datetime import datetime
+import .NYT_methods_table as NYTt
+import .DJ_methods_table as DJt
 import dask.dataframe as dd
 import pandas as pd
 import numpy as np
@@ -239,7 +241,7 @@ def gen_tag_id_map(tag_id_map):
 
 def table_wrapper(ngrams, processes, txt_labels, raw_dir, count_dir,
                   table_dir, raw_files, log_file, term_count_kwds_dict,
-                  table_file_processor, table_post_cleaner=None):
+                  data_type):
     """generates tables for specified data set
 
     Parameters
@@ -262,15 +264,22 @@ def table_wrapper(ngrams, processes, txt_labels, raw_dir, count_dir,
         location where log is written
     term_count_kwds_dict : dict-like
         dictionary containing key words for each ngram
-    table_file_processor : function
-        method for generating tables from raw terms
-    table_post_cleaner : function or None
-        if None method applied afer table construction
+    data_type : str
+        label for data type of current run
 
     Returns
     -------
     None
     """
+
+    if data_type == "DJ":
+        table_file_processor = DJt.table_file_processor
+        table_post_cleaner = DJt.table_post_cleaner
+    elif data_type == "NYT":
+        table_file_processor = NYTt.table_file_processor
+        table_post_cleaner = NYTt.table_post_cleaner
+    else:
+        raise ValueError("Unsupported data_type: %s" % data_type)
 
     t0 = datetime.now()
 

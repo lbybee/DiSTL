@@ -1,21 +1,21 @@
 import os
 
 
-def write_sql(dates, ngram_labels, txt_labels, tags, sql_dir):
+def write_sql(sql_dir, partitions, ngram_labels, txt_labels, tags):
     """writes the sql to a series of files for each table
 
     Parameters
     ----------
-    dates : list
+    sql_dir : str
+        location where sql files are stored
+    partitions : list
         list of dates (partitions)
     ngram_labels : list
         list of lables for ngrams
     txt_labels : list
         list of txt categories
-    tag_lables : list
+    tags : list
         list of tag categories
-    sql_dir : str
-        location where sql files are stored
 
     Returns
     -------
@@ -54,7 +54,7 @@ def write_sql(dates, ngram_labels, txt_labels, tags, sql_dir):
             fd.write(sql)
 
     # partitions
-    for dl in dates:
+    for dl in partitions:
 
         # docs
         sql = """

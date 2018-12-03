@@ -1,15 +1,15 @@
 """
 these are the core methods for building a basic DTM from the databse
 """
-
+from joblib import Parallel, delayed
 from datetime import datetime
-import multiprocessing
 import psycopg2
+import logging
 import os
 
 
 def term_query(term_part, db_kwds, schema, out_data_dir, term_columns,
-               gen_term_sql, gen_term_sql_kwds, log_file):
+               gen_term_sql, gen_term_sql_kwds, logger=None):
     """generates a table containing the term_label and term_id for the
     ngrams kept after applying any rules to constrain sql
 
@@ -33,8 +33,8 @@ def term_query(term_part, db_kwds, schema, out_data_dir, term_columns,
         method for generating term sql
     gen_term_sql_kwds : dict-like
         key-words to pass to term_sql
-    log_file : str
-        location where log will be written
+    logger : python logging instance or None
+        if provided, we assume this is where the logs shall be written
 
     Returns
     -------
@@ -66,9 +66,9 @@ def term_query(term_part, db_kwds, schema, out_data_dir, term_columns,
         fd.write(",".join(term_columns) + "\n")
         cursor.copy_to(fd, copy_sql, sep=",")
 
-    t1 = datetime.now()
-    with open(log_file, "a") as fd:
-        fd.write("term,%s,%s,%s\n" % (term_part, str(t1), str(t1 - t0)))
+    if logger:
+        t1 = datetime.now()
+        logger.info("term,%s,%s\n" % (term_part, str(t1 - t0)))
 
     cursor.close()
     conn.close()
@@ -108,7 +108,7 @@ def drop_temp_term_table(term_part, db_kwds, schema):
 def doc_count_query(doc_part, db_kwds, schema, out_data_dir,
                     term_partitions, count_partitions, doc_columns,
                     count_columns, gen_full_doc_sql, gen_count_sql,
-                    gen_full_doc_sql_kwds, log_file):
+                    gen_full_doc_sql_kwds, logger=None):
     """selects the counts which meet the search criteria for terms and docs
     and writes them to a set of output files
 
@@ -136,8 +136,8 @@ def doc_count_query(doc_part, db_kwds, schema, out_data_dir,
         method for generating count sql
     gen_full_doc_sql_kwds : dict-like
         key words passed to gen_full_doc_sql
-    log_file : str
-        locatio where log is stored
+    logger : python logging instance or None
+        if provided, we assume this is where the logs shall be written
 
     Returns
     -------
@@ -164,9 +164,9 @@ def doc_count_query(doc_part, db_kwds, schema, out_data_dir,
         fd.write(",".join(doc_columns) + "\n")
         cursor.copy_to(fd, "(%s)" % doc_id_sql, sep=",")
 
-    t1 = datetime.now()
-    with open(log_file, "a") as fd:
-        fd.write("doc,%s,%s,%s\n" % (doc_part, str(t1), str(t1 - t0)))
+    if logger:
+        t1 = datetime.now()
+        logger.info("doc,%s,%s\n" % (doc_part, str(t1 - t0)))
 
     # for each ngram and term label extract counts
     for term_part in term_partitions:
@@ -182,18 +182,16 @@ def doc_count_query(doc_part, db_kwds, schema, out_data_dir,
                 fd.write(",".join(count_columns) + "\n")
                 cursor.copy_to(fd, "(%s)" % count_sql, sep=",")
 
-            t1 = datetime.now()
-            with open(log_file, "a") as fd:
-                fd.write("count,%s,%s,%s,%s,%s\n" % (count_part,
-                                                     term_part,
-                                                     doc_part,
-                                                     str(t1), str(t1 - t0)))
+            if logger:
+                t1 = datetime.now()
+                logger.info("count,%s,%s,%s,%s\n" % (count_part, term_part,
+                                                     doc_part, str(t1 - t0)))
 
 
 def query_wrapper(doc_partitions, term_partitions, count_partitions, db_kwds,
-                  schema, doc_columns, term_columns, count_columns, processes,
+                  schema, doc_columns, term_columns, count_columns, n_jobs,
                   out_data_dir, gen_full_doc_sql_kwds, gen_term_sql_kwds,
-                  log_file, **kwds):
+                  logger=None, **kwds):
     """runs a query on the text database to build a DTM
 
     Parameters
@@ -215,16 +213,16 @@ def query_wrapper(doc_partitions, term_partitions, count_partitions, db_kwds,
         list of columns for resulting term_id files
     count_columns : list
         list of columns for resulting count files
-    processes : int
-        number of processes for multiprocessing pool
+    n_jobs : int
+        number of jobs for multiprocessing
     out_data_dir : str
         location where output files will be stored
     gen_full_doc_sql_kwds : dictionary
         dict to pass to gen_full_doc_sql method
     gen_term_sql_kwds : dictionary
         dict to pass to gen_term_sql
-    log_file : str
-        location where to write log
+    logger : python logging instance or None
+        if provided, we assume this is where the logs shall be written
 
     Returns
     -------
@@ -239,6 +237,8 @@ def query_wrapper(doc_partitions, term_partitions, count_partitions, db_kwds,
     3. count files over count_partitions, doc_partitions, and term_partitions
     """
 
+    print(logger)
+
     # import schema type methods
     if schema == "DJN" or schema == "DJWSJ":
         from .DJ_methods import gen_count_sql, gen_full_doc_sql, gen_term_sql
@@ -250,30 +250,24 @@ def query_wrapper(doc_partitions, term_partitions, count_partitions, db_kwds,
     for term_part in term_partitions:
         drop_temp_term_table(term_part, db_kwds, schema)
 
-    # wipe out log
-    open(log_file, "w")
-
-    # initialize multiprocessing
-    pool = multiprocessing.Pool(processes)
-
     # create tmp term tables and write to the output dir
-    pool.starmap(term_query,
-                 [(term_part, db_kwds, schema, out_data_dir, term_columns,
-                   gen_term_sql, gen_term_sql_kwds, log_file)
-                  for term_part in term_partitions])
+    Parallel(n_jobs=n_jobs)(
+        delayed(term_query)(
+            term_part, db_kwds, schema, out_data_dir, term_columns,
+            gen_term_sql, gen_term_sql_kwds, logger)
+        for term_part in term_partitions)
 
     # write doc_id and count files for each doc_part
-    pool.starmap(doc_count_query,
-                 [(doc_part, db_kwds, schema, out_data_dir, term_partitions,
-                   count_partitions, doc_columns, count_columns,
-                   gen_full_doc_sql, gen_count_sql, gen_full_doc_sql_kwds,
-                   log_file)
-                  for doc_part in doc_partitions])
+    Parallel(n_jobs=n_jobs)(
+        delayed(doc_count_query)(
+            doc_part, db_kwds, schema, out_data_dir, term_partitions,
+            count_partitions, doc_columns, count_columns,
+            gen_full_doc_sql, gen_count_sql, gen_full_doc_sql_kwds,
+            logger)
+        for doc_part in doc_partitions)
 
     # drop tmp tables
-    pool.starmap(drop_temp_term_table,
-                 [(term_part, db_kwds, schema) for term_part in
-                  term_partitions])
-
-    # close pool
-    pool.close()
+    Parallel(n_jobs=n_jobs)(
+        delayed(drop_temp_term_table)(
+            term_part, db_kwds, schema)
+        for term_part in term_partitions)

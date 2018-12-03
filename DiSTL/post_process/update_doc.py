@@ -1,5 +1,5 @@
+from joblib import Parallel, delayed
 from .utilities import _copy_id
-import multiprocessing
 import pandas as pd
 import os
 
@@ -66,7 +66,7 @@ def update_doc_partition(in_data_dir, out_data_dir, doc_part,
      in zip(counts, count_f_l)]
 
 
-def update_doc_core(in_data_dir, out_data_dir, processes, doc_partitions,
+def update_doc_core(in_data_dir, out_data_dir, n_jobs, doc_partitions,
                     term_partitions, update_method, update_method_kwds=None,
                     term_id_depend=False, **kwds):
     """applies the provided update method to the partitions along the doc
@@ -78,8 +78,8 @@ def update_doc_core(in_data_dir, out_data_dir, processes, doc_partitions,
         location where input DTM files are located
     out_data_dir : str
         location where output DTM file will be written
-    processes : int
-        number of processes for multiprocessing pool
+    n_jobs : int
+        number of jobs for multiprocessing
     doc_partitions : list
         list of partitions over doc axis (e.g. date)
     term_partitions : list
@@ -121,19 +121,15 @@ def update_doc_core(in_data_dir, out_data_dir, processes, doc_partitions,
     else:
         term_id_l = None
 
-    # init pool
-    pool = multiprocessing.Pool(processes)
-
     # update each doc part
-    pool.starmap(update_doc_partition,
-                 [(in_data_dir, out_data_dir, doc_part, term_partitions,
-                   update_method, update_method_kwds, term_id_l)
-                  for doc_part in doc_partitions])
+    Parallel(n_jobs=n_jobs)(
+        delayed(update_doc_partition)(
+            in_data_dir, out_data_dir, doc_part, term_partitions,
+            update_method, update_method_kwds, term_id_l)
+        for doc_part in doc_partitions)
 
     # copy term partition files
-    pool.starmap(_copy_id,
-                 [("term_id_%s.csv" % term_part, in_data_dir, out_data_dir)
-                  for term_part in term_partitions])
-
-    # close pool
-    pool.close()
+    Parallel(n_jobs=n_jobs)(
+        delayed(_copy_id)(
+            "term_id_%s.csv" % term_part, in_data_dir, out_data_dir)
+        for term_part in term_partitions)

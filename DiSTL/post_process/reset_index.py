@@ -1,6 +1,6 @@
+from joblib import Parallel, delayed
 import dask.dataframe as dd
 import pandas as pd
-import multiprocessing
 import os
 
 
@@ -194,7 +194,7 @@ def _reset_doc_part(doc_part, doc_partitions, term_partitions,
 
 
 def reset_index_wrapper(doc_partitions, term_partitions, tmp_length_file,
-                        processes, in_data_dir, out_data_dir,
+                        n_jobs, in_data_dir, out_data_dir,
                         count_partitions=None, **kwds):
     """reset the indices of a DTM that may have been manipulated by other
     operations
@@ -208,8 +208,8 @@ def reset_index_wrapper(doc_partitions, term_partitions, tmp_length_file,
     tmp_length_file : str
         location of intermediate file where lengths are stored for doc
         parts
-    processes : int
-        number of processes for multiprocessing pool
+    n_jobs : int
+        number of jobs for multiprocessing
     in_data_dir : str
         location where input files are stored
     out_data_dir : str
@@ -239,24 +239,23 @@ def reset_index_wrapper(doc_partitions, term_partitions, tmp_length_file,
     u_doc_id = counts["doc_id"].drop_duplicates().compute()
     u_term_id = counts["term_id"].drop_duplicates().compute()
 
-    # initialize pool
-    pool = multiprocessing.Pool(processes)
+    # write tmp_length_file
+    open(tmp_length_file, "w")
 
     # get id lengths for doc_ids
-    pool.starmap(_gen_doc_id_length, [(doc_part, in_data_dir,
-                                       tmp_length_file, u_doc_id)
-                                      for doc_part in doc_partitions])
+    Parallel(n_jobs=n_jobs)(
+        delayed(_gen_doc_id_length)(
+            doc_part, in_data_dir, tmp_length_file, u_doc_id)
+        for doc_part in doc_partitions)
 
     # load term id map and reset term ids
     term_id_map = _load_term_id_map(term_partitions, in_data_dir,
                                     out_data_dir, u_term_id)
 
     # reset doc ids and apply new doc/term ids to counts
-    pool.starmap(_reset_doc_part,
-                 [(doc_part, doc_partitions, term_partitions,
-                   count_partitions, in_data_dir, out_data_dir,
-                   tmp_length_file, u_doc_id, term_id_map)
-                  for doc_part in doc_partitions])
-
-    # close pool
-    pool.close()
+    Parallel(n_jobs=n_jobs)(
+        delayed(_reset_doc_part)(
+            doc_part, doc_partitions, term_partitions, count_partitions,
+            in_data_dir, out_data_dir, tmp_length_file, u_doc_id,
+            term_id_map)
+        for doc_part in doc_partitions)

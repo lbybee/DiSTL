@@ -21,9 +21,6 @@ import os
 def _prep_count_map(doc_globstring, term_globstring, count_globstring):
     """prepares a numpy array mapping each count partition to a corresponding
     doc and term parititon
-
-    Parameters
-    ----------
     """
 
     # TODO it should be possible to optimize this considerably further
@@ -56,6 +53,20 @@ def _prep_count_map(doc_globstring, term_globstring, count_globstring):
 
 
 def _add_part(main_count_i, new_count_i, **kwargs):
+    """takes a count_df partition from the main DTM and a count_df partition
+    from the new DTM and sums them, returning the sum
+
+    Parameters
+    ----------
+    main_count_i : pandas df
+        main count_df partition
+    new_count_i : pandas df
+        new count_df partition
+
+    Returns
+    -------
+    updated main_count_i
+    """
 
     if "fill_value" in kwargs:
         raise ValueError("fill_value NAN default overwritten by 0")
@@ -71,12 +82,29 @@ def _add_part(main_count_i, new_count_i, **kwargs):
     return main_count_i
 
 
-def _reset_count_part(count_ji, doc_j, term_i, doc_count_j, term_count_i,
-                      doc_index, term_index):
-    """resets the doc_index and term_index for the corresponding counts"""
+def _reset_count_part(count_ji, doc_j, term_i, doc_index, term_index):
+    """resets the doc_index and term_index for the corresponding counts
 
-    doc_count_val = doc_count_j[doc_index]
-    term_count_val = term_count_i[term_index]
+    Parameters
+    ----------
+    count_ji : pandas dataframe
+        count_df for current count (doc & term) partition
+    doc_j : pandas df
+        doc_df for current doc partition
+    term_i : pandas df
+        term_df for current term partition
+    doc_index : str
+        label for doc index
+    term_index : str
+        label for term index
+
+    Returns
+    -------
+    updated count
+    """
+
+    doc_count_val = doc_j.shape[0]
+    term_count_val = term_i.shape[0]
 
     doc_index_map = doc_j[[doc_index]]
     doc_index_map["n_%s" % doc_index] = doc_index_map.index + doc_count_val
@@ -95,10 +123,22 @@ def _reset_count_part(count_ji, doc_j, term_i, doc_count_j, term_count_i,
     return count_ji
 
 
-def _reset_mdata_part(mdata_q, mdata_count_q, mdata_index):
-    """resets the mdata index for corresponding mdata"""
+def _reset_mdata_part(mdata_q, mdata_index):
+    """resets the mdata index for corresponding mdata
 
-    mdata_count_val = mdata_count_q[mdata_index]
+    Parameters
+    ----------
+    mdata_q : pandas dataframe
+        dataframe for metadata for current parition
+    mdata_index : str
+        label for mdata index
+
+    Returns
+    -------
+    updated mdata_q
+    """
+
+    mdata_count_val = mdata_q.shape[0]
 
     mdata_index_map = mdata_q[[mdata_index]]
     mdata_index_map["n_%s" % mdata_index] = (mdata_index_map.index +
@@ -112,7 +152,22 @@ def _reset_mdata_part(mdata_q, mdata_count_q, mdata_index):
 
 
 def _merge_count_part(count_ji, mdata_q, mdata_index):
-    """constrain the counts to whatever is left after the mdata merge"""
+    """constrain the counts to whatever is left after the mdata merge
+
+    Parameters
+    ----------
+    count_ji : pandas dataframe
+        dataframe for the corresponding jth doc partition and ith term
+        partition
+    mdata_q : pandas dataframe
+        metadata for axis over which merge is happening
+    mdata_index : str
+        label for axis index
+
+    Returns
+    -------
+    updated count_ji (constrained to results from merge)
+    """
 
     count_ji = count_ji[count_ji[mdata_index].isin(mdata_q[mdata_index])]
 
@@ -120,35 +175,75 @@ def _merge_count_part(count_ji, mdata_q, mdata_index):
 
 
 class DTM(object):
+    """Core class for handling DTM data
 
-    def __init__(self, doc_df=None, term_df=None, count_df=None,
-                 doc_index=None, term_index=None, set_index=False):
+    Parameters
+    ----------
+    doc_df : dask-dataframe
+        dataframe containing doc metadata and id/index
+    term_df : dask-dataframe
+        dataframe containing term metadata and id/index
+    count_df : dask-dataframe
+        dataframe containing counts and doc+term id/index
+    doc_index : str
+        label for doc id/index
+    term_index : str
+        label for term id/index
+    set_index : bool
+        whether to set the indices for doc_df and term_df to their
+        corresponding index labels
 
-        if (doc_df is not None and term_df is not None and
-            count_df is not None):
+    Attributes
+    ----------
+    doc_df : dask-dataframe
+        dataframe containing doc metadata and id/index
+    term_df : dask-dataframe
+        dataframe containing term metadata and id/index
+    count_df : dask-dataframe
+        dataframe containing counts and doc+term id/index
+    doc_index : str
+        label for doc id/index
+    term_index : str
+        label for term id/index
+    """
 
-            self.doc_df = doc_df
-            self.term_df = term_df
-            self.count_df = count_df
+    def __init__(self, doc_df, term_df, count_df, doc_index, term_index,
+                 set_index=False):
 
-            self.doc_index = doc_index
-            self.term_index = term_index
+        self.doc_df = doc_df
+        self.term_df = term_df
+        self.count_df = count_df
 
-            if set_index:
-                self.doc_df = self.doc_df.set_index(doc_index)
-                self.term_df = self.term_df.set_index(term_index)
+        self.doc_index = doc_index
+        self.term_index = term_index
 
-            self.npartitions = (doc_df.npartitions,
-                                term_df.npartitions)
+        if set_index:
+            self.doc_df = self.doc_df.set_index(doc_index)
+            self.term_df = self.term_df.set_index(term_index)
 
-        elif (doc_df is not None or term_df is not None or
-              count_df is not None):
-            raise ValueError("All dfs must be provided")
+        self.npartitions = (doc_df.npartitions,
+                            term_df.npartitions)
 
 
     def to_csv(self, out_data_dir=None, doc_globstring=None,
                term_globstring=None, count_globstring=None, **kwargs):
-        """writes the current DTM to the specified files"""
+        """writes the current DTM to the specified files
+
+        Parameters
+        ----------
+        out_data_dir : str or None
+            location directory where results should be stored
+        doc_globstring : str or None
+            globstring for doc_df
+        term_globstring : str or None
+            globstring for term_df
+        count_globstring : str or None
+            globstring for count_df
+
+        Returns
+        -------
+        None
+        """
 
         if out_data_dir:
             if doc_globstring or term_globstring or count_globstring:
@@ -165,7 +260,17 @@ class DTM(object):
 
 
     def add(self, dtm, **kwargs):
-        """adds another DTM to the current DTM"""
+        """adds another DTM to the current DTM
+
+        Parameters
+        ----------
+        dtm : DTM instance
+            an additional DTM which we wish to add
+
+        Returns
+        -------
+        None
+        """
 
         # all metadata must be the same between DTMs to add
         if self.count_map != dtm.count_map:
@@ -185,19 +290,17 @@ class DTM(object):
 
 
     def reset_index(self):
-        """resets each index"""
+        """resets each index, this should be run after any series of
+        operations which may change the data in DTM"""
 
-        # generate agg count del
-        term_fn = lambda x: x[[self.term_index]].count()
-        term_count = self.term_df.map_partitions(term_fn).cumsum()
-        term_count_del = term_count.to_delayed()
-        doc_fn = lambda x: x[[self.doc_index]].count()
-        doc_count = self.doc_df.map_partitions(doc_fn).cumsum()
-        doc_count_del = doc_count.to_delayed()
-
+        # get delayed values
         doc_del = self.doc_df.to_delayed()
         term_del = self.term_df.to_delayed()
         count_del = self.count_df.to_delayed()
+
+        # prep fns
+        cdel_fn = delayed(_reset_count_part)
+        mdel_fn = delayed(_reset_mdata_part)
 
         # update count indices
         del_l = []
@@ -206,30 +309,37 @@ class DTM(object):
         for doc_j in doc_del:
             for term_i in term_del:
                 count_ji = count_del[q]
-                del_l.append(delayed(_reset_count_part)(count_ji, doc_j,
-                                                        term_i,
-                                                        doc_count_j,
-                                                        term_count_i,
-                                                        self.doc_index,
-                                                        self.term_index))
+                del_l.append(cdel_fn(count_ji, doc_j, term_i, self.doc_index,
+                                     self.term_index))
                 q += 1
         self.count_df = dd.from_delayed(del_l)
 
         # update doc indices
-        del_l = [delayed(_reset_mdata_part)(doc_j, doc_count_j,
-                                            self.doc_index)
-                 for doc_j, doc_count_j in zip(doc_del, doc_count_del)]
+        del_l = [mdel_fn(doc_j, self.doc_index) for doc_j in doc_del]
         self.doc_df = dd.from_delayed(del_l)
 
         # update term indices
-        del_l = [delayed(_reset_mdata_part)(term_i, term_count_i,
-                                            self.term_index)
-                 for term_i, term_count_i in zip(term_del, term_count_del)]
+        del_l = [mdel_fn(term_i, self.term_index) for term_i in term_del]
         self.term_df = dd.from_delayed(del_l)
 
 
     def repartition(self, npartitions):
-        """repartition the DTM"""
+        """repartition the DTM
+
+        Parameters
+        ----------
+        npartitions : scalar
+            number of partitions for new DTM
+
+        Returns
+        -------
+        None
+
+        Notes
+        -----
+        1. This is only over the doc axis
+        2. This only supports shrinking the number of partitions
+        """
 
         # TODO currently this only supports shrinking the number of
         # partitions
@@ -242,6 +352,7 @@ class DTM(object):
         stp = D / npartitions
         doc_cum_count = doc_count.cumsum()
 
+        # prep partition info
         partitions = []
         for n in range(npartitions):
             chk = len(doc_cum_count[doc_cum_count < n * stp])
@@ -250,19 +361,24 @@ class DTM(object):
 
         term_part = self.term_df.npartitions
 
+        # init fn
+        del_fn = delayed(pd.concat)
+
+        # prep delayed data
         doc_del = self.doc_df.to_delayed()
         count_del = self.count_df.to_delayed()
 
         doc_del_l = []
         count_del_l = []
 
+        # collapse partitions
         for n in range(1, npartitions + 1):
 
             n_start = partitions[n-1]
             n_stop = partitions[n]
             doc_del_n = doc_del[n_start:n_stop]
 
-            doc_del_l.append(delayed(pd.concat)(doc_del_n))
+            doc_del_l.append(del_fn(doc_del_n))
 
             for t in range(term_part):
 
@@ -271,7 +387,7 @@ class DTM(object):
                 t_stp = term_part
 
                 count_del_nt = count_del[t_start:t_stop:t_stp]
-                count_del_l.append(delayed(pd.concat)(count_del_nt))
+                count_del_l.append(del_fn(count_del_nt))
 
         self.doc_df = dd.from_delayed(doc_del_l)
         self.count_df = dd.from_delayed(count_del_l)
@@ -293,7 +409,24 @@ class DTM(object):
 
 
     def merge(self, new_df, axis="doc", **kwargs):
-        """merge another dask-dataframe along the specified axis"""
+        """merge another dask-dataframe along the specified axis
+
+        Parameters
+        ----------
+        new_df : dataframe
+            the data-frame we are merging on the axis
+        axis : str
+            label for axis (currently should be doc or term)
+
+        Returns
+        -------
+        None
+        """
+
+        # TODO test new_df with pandas
+
+        # init fn
+        del_fn = delayed(_merge_count_part)
 
         # merge data
         if axis == "doc":
@@ -315,11 +448,9 @@ class DTM(object):
             for term_i in term_del:
                 count_ji = count_del[q]
                 if axis == "doc":
-                    del_l.append(delayed(_merge_count_part(count_ji, doc_j,
-                                                           doc_index)))
+                    del_l.append(del_fn(count_ji, doc_j, doc_index))
                 elif axis == "term":
-                    del_l.append(delayed(_merge_count_part(count_ji, term_i,
-                                                           term_index)))
+                    del_l.append(del_fn(count_ji, term_i, term_index))
                 q += 1
         self.count_df = dd.from_delayed(del_l)
 
@@ -327,7 +458,36 @@ class DTM(object):
 def read_csv(in_data_dir=None, doc_globstring=None, term_globstring=None,
              count_globstring=None, doc_index="doc_id", term_index="term_id",
              set_index=False, blocksize=None, **kwargs):
-    """reads the csvs for each partition and populates DTM"""
+    """reads the csvs for each partition and populates DTM
+
+    Parameters
+    ----------
+    in_data_dir : str or None
+        if provided, we assume that all the files in this directory correspond
+        to a DTM and populate globstrings accordingly
+    doc_globstring : str or None
+        globstring for doc_df files
+    term_globstring : str or None
+        globstring for term_df files
+    count_globstring : str or None
+        globstring for count files
+    doc_index : str
+        label for doc axis index
+    term_index : str
+        label for term axis index
+    set_index : bool
+        whether or not we set the index for doc_df and term_df to doc_index
+        and term_index.  Note that this currently doesn't do much...
+    blocksize : scalar or None
+        blocksize for dask dfs.  Given that we want our partitions to align
+        we default this to None (so each partition corresponds to a file)
+
+    Returns
+    -------
+    populated DTM object
+    """
+
+    # TODO handle set_index, should we keep this?  Can we do multiindex?
 
     if in_data_dir:
         if doc_globstring or term_globstring or count_globstring:

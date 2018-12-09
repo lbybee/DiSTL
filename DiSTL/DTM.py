@@ -15,10 +15,10 @@ import os
 
 # TODO currently, we aren't returning new copies of the DTM for the various
 # methods.  This approach does not align with dask/pandas and should probably
-# be changed.
+# be changed (though it might align well with the database interpretation).
 
 
-def _prep_flist(doc_globstring, term_globstring, count_globstring):
+def _prep_fnames(doc_globstring, term_globstring):
     """prepares lists of file names to help with writing updates
 
     Parameters
@@ -27,38 +27,32 @@ def _prep_flist(doc_globstring, term_globstring, count_globstring):
         globstring corresponding to doc_df
     term_globstring : str
         globstring corresponding to term_df
-    count_globstring : str
-        globstring corresponding to count_df
 
     Returns
     -------
-    tuple of base file names and diffs
+    None
     """
-
-    # TODO it should be possible to optimize this considerably further
 
     # get file lists
     doc_flist = glob.glob(doc_globstring)
     term_flist = glob.glob(term_globstring)
-    count_flist = glob.glob(count_globstring)
+
+    doc_flist.sort()
+    term_flist.sort()
 
     # get base names
     doc_flist = [os.path.basename(f) for f in doc_flist]
     term_flist = [os.path.basename(f) for f in term_flist]
-    count_flist = [os.path.basename(f) for f in count_flist]
 
     # extract patterns to populate count_map
-    doc_diff = ["".join([r.replace("+ ", "") for r in
+    doc_fpat = ["".join([r.replace("+ ", "") for r in
                 difflib.ndiff(doc_globstring, f) if "+" in r])
                 for f in doc_flist]
-    term_diff = ["".join([r.replace("+ ", "") for r in
+    term_fpat = ["".join([r.replace("+ ", "") for r in
                  difflib.ndiff(term_globstring, f) if "+" in r])
                  for f in term_flist]
-    count_diff = ["".join([r.replace("+ ", "") for r in
-                  difflib.ndiff(count_globstring, f) if "+" in r])
-                  for f in count_flist]
 
-    return doc_flist, term_flist, count_flist, doc_diff, term_diff, count_diff
+    return doc_fpat, term_fpat
 
 
 class DTM(object):
@@ -76,6 +70,12 @@ class DTM(object):
         label for doc id/index
     term_index : str
         label for term id/index
+    doc_fpat : list or None
+        file pattern stored to produce doc files, will be:
+        <out_data_dir>/doc_<doc_fpat>[i]
+    term_fpat : list or None
+        file pattern stored to produce term files, will be:
+        <out_data_dir>/term_<term_fpat>[j]
 
     Attributes
     ----------
@@ -89,9 +89,21 @@ class DTM(object):
         label for doc id/index
     term_index : str
         label for term id/index
+    doc_fpat : list or None
+        file pattern stored to produce doc files, will be:
+        <out_data_dir>/doc_<doc_fpat>[i]
+    term_fpat : list or None
+        file pattern stored to produce term files, will be:
+        <out_data_dir>/term_<term_fpat>[j]
+
+    Notes
+    -----
+    If file patterns are stored the count files will be
+    <out_data_dir>/count_<doc_fpat>[i]_<term_fpat>[j]
     """
 
-    def __init__(self, doc_df, term_df, count_df, doc_index, term_index):
+    def __init__(self, doc_df, term_df, count_df, doc_index, term_index,
+                 doc_fpat=None, term_fpat=None):
 
         self.doc_df = doc_df
         self.term_df = term_df
@@ -99,6 +111,9 @@ class DTM(object):
 
         self.doc_index = doc_index
         self.term_index = term_index
+
+        self.doc_fpat = doc_fpat
+        self.term_fpat = term_fpat
 
         self.npartitions = (doc_df.npartitions,
                             term_df.npartitions)
@@ -124,13 +139,25 @@ class DTM(object):
         None
         """
 
+        # TODO if fpats are provided, the globstrings are really lists, should
+        # probably rename
+
         if out_data_dir:
             if doc_globstring or term_globstring or count_globstring:
                 raise ValueError("If out_data_dir provided don't provide \
                                   globstrings")
+            elif self.doc_fpat is not None and self.term_fpat is not None:
+                doc_globstring = [os.path.join(out_data_dir, "doc_%s.csv" % f)
+                                  for f in self.doc_fpat]
+                term_globstring = [os.path.join(out_data_dir, "term_%s.csv" % f)
+                                   for f in self.term_fpat]
+                count_globstring = [os.path.join(out_data_dir, "count_%s_%s.csv" %
+                                                 doc_f, term_f)
+                                    for term_f in self.term_fpat
+                                    for doc_f in self.doc_fpat]
             else:
-                doc_globstring = os.path.join(out_data_dir, "doc_id_*.csv")
-                term_globstring = os.path.join(out_data_dir, "term_id_*.csv")
+                doc_globstring = os.path.join(out_data_dir, "doc_*.csv")
+                term_globstring = os.path.join(out_data_dir, "term_*.csv")
                 count_globstring = os.path.join(out_data_dir, "count_*.csv")
 
         self.doc_df.to_csv(doc_globstring, index=False, **kwargs)
@@ -208,6 +235,24 @@ class DTM(object):
 
         self.doc_df = dd.from_delayed(doc_del_l)
         self.count_df = dd.from_delayed(count_del_l)
+
+        # if we are storing fname patterns combine these as well
+        if self.doc_fpat is not None:
+
+            n_doc_fpat = []
+            for n in range(1, npartitions + 1):
+                n_start = partitions[n-1]
+                n_stop = partitons[n]
+
+                oc_fpat_part = self.doc_fpat[n_start:n_stop]
+                if len(doc_fpat_part) > 1:
+                    t_doc_fpat = doc_fpat_part[0] + "_T_" + doc_fpat_part[1]
+                elif len(doc_fpat_part) == 1:
+                    t_doc_fpat = doc_fpat_part[0]
+                else:
+                    raise ValueError("doc_fpat doesn't align with parititons")
+
+            self.doc_fpat = n_doc_fpat
 
         self.npartitions = (self.doc_df.npartitions,
                             self.term_df.npartitions)
@@ -421,7 +466,7 @@ class DTM(object):
             self.map_count(func, **kwargs)
 
 
-    def reset_index(self, doc=False, term=False, count=False):
+    def reset_index(self, doc=True, term=True, count=True):
         """resets each index, this should be run after any series of
         operations which may change the data in DTM
 
@@ -515,7 +560,7 @@ class DTM(object):
 
 def read_csv(in_data_dir=None, doc_globstring=None, term_globstring=None,
              count_globstring=None, doc_index="doc_id", term_index="term_id",
-             blocksize=None, **kwargs):
+             keep_fname=True, blocksize=None, **kwargs):
     """reads the csvs for each partition and populates DTM
 
     Parameters
@@ -533,6 +578,8 @@ def read_csv(in_data_dir=None, doc_globstring=None, term_globstring=None,
         label for doc axis index
     term_index : str
         label for term axis index
+    keep_fname : bool
+        whether to keep a record of the filename patterns (for writing updated DTM)
     blocksize : scalar or None
         blocksize for dask dfs.  Given that we want our partitions to align
         we default this to None (so each partition corresponds to a file)
@@ -542,17 +589,17 @@ def read_csv(in_data_dir=None, doc_globstring=None, term_globstring=None,
     populated DTM object
     """
 
+    # TODO add support for file lists
+
     if in_data_dir:
         if doc_globstring or term_globstring or count_globstring:
             raise ValueError("If in_data_dir provided don't provide \
                               globstrings")
         else:
-            doc_globstring = os.path.join(in_data_dir, "doc_id_*.csv")
-            term_globstring = os.path.join(in_data_dir, "term_id_*.csv")
+            doc_globstring = os.path.join(in_data_dir, "doc_*.csv")
+            term_globstring = os.path.join(in_data_dir, "term_*.csv")
             count_globstring = os.path.join(in_data_dir, "count_*.csv")
 
-    flists = _prep_flist(doc_globstring, term_globstring, count_globstring)
-    doc_flist, term_flist, count_flist, doc_d, term_d, count_d = flists
 
     # load doc id info
     doc_flist.sort()
@@ -578,7 +625,13 @@ def read_csv(in_data_dir=None, doc_globstring=None, term_globstring=None,
     else:
         count_df = dd.read_csv(count_flist, blocksize=blocksize, **kwargs)
 
+    if keep_fname:
+        doc_fpat, term_fpat = _prep_fnames(doc_globstring, term_globstring)
+    else:
+        doc_fpat, term_fpat = None, None
+
     dtm = DTM(doc_df=doc_df, term_df=term_df, count_df=count_df,
-              doc_index=doc_index, term_index=term_index)
+              doc_index=doc_index, term_index=term_index,
+              doc_fpat=doc_fpat, term_fpat=term_fpat)
 
     return dtm

@@ -101,7 +101,7 @@ def reset_ind_mdata(mdata_df, mdata_count, mdata_index):
     mdata_ind_map.index = mdata_ind_map[mdata_index]
     mdata_ind_map = mdata_ind_map["n_%s" % mdata_index]
 
-    mdata_df[mdata_index] = mdata_df[mdata_index].map(mdata_index_map)
+    mdata_df[mdata_index] = mdata_df[mdata_index].map(mdata_ind_map)
 
     return mdata_df
 

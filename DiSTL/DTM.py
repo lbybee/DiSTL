@@ -17,6 +17,8 @@ import os
 # methods.  This approach does not align with dask/pandas and should probably
 # be changed (though it might align well with the database interpretation).
 
+# TODO when you repartition the names aren't properly stored
+
 
 def _prep_fnames(doc_globstring, term_globstring):
     """prepares lists of file names to help with writing updates
@@ -72,10 +74,10 @@ class DTM(object):
         label for term id/index
     doc_fpat : list or None
         file pattern stored to produce doc files, will be:
-        <out_data_dir>/doc_<doc_fpat>[i]
+        <out_dir>/doc_<doc_fpat>[i]
     term_fpat : list or None
         file pattern stored to produce term files, will be:
-        <out_data_dir>/term_<term_fpat>[j]
+        <out_dir>/term_<term_fpat>[j]
 
     Attributes
     ----------
@@ -91,15 +93,15 @@ class DTM(object):
         label for term id/index
     doc_fpat : list or None
         file pattern stored to produce doc files, will be:
-        <out_data_dir>/doc_<doc_fpat>[i]
+        <out_dir>/doc_<doc_fpat>[i]
     term_fpat : list or None
         file pattern stored to produce term files, will be:
-        <out_data_dir>/term_<term_fpat>[j]
+        <out_dir>/term_<term_fpat>[j]
 
     Notes
     -----
     If file patterns are stored the count files will be
-    <out_data_dir>/count_<doc_fpat>[i]_<term_fpat>[j]
+    <out_dir>/count_<doc_fpat>[i]_<term_fpat>[j]
     """
 
     def __init__(self, doc_df, term_df, count_df, doc_index, term_index,
@@ -119,13 +121,27 @@ class DTM(object):
                             term_df.npartitions)
 
 
-    def to_csv(self, out_data_dir=None, doc_globstring=None,
+    def copy(self):
+        """generates a copy of the DTM and returns that"""
+
+        cDTM = DTM(doc_df=self.doc_df.copy(),
+                   term_df=self.term_df.copy(),
+                   count_df=self.count_df.copy(),
+                   doc_index=self.doc_index,
+                   term_index=self.term_index,
+                   doc_fpat=self.doc_fpat,
+                   term_fpat=self.term_fpat)
+
+        return cDTM
+
+
+    def to_csv(self, out_dir=None, doc_globstring=None,
                term_globstring=None, count_globstring=None, **kwargs):
         """writes the current DTM to the specified files
 
         Parameters
         ----------
-        out_data_dir : str or None
+        out_dir : str or None
             location directory where results should be stored
         doc_globstring : str or None
             globstring for doc_df
@@ -142,23 +158,26 @@ class DTM(object):
         # TODO if fpats are provided, the globstrings are really lists, should
         # probably rename
 
-        if out_data_dir:
+        if out_dir:
             if doc_globstring or term_globstring or count_globstring:
-                raise ValueError("If out_data_dir provided don't provide \
+                raise ValueError("If out_dir provided don't provide \
                                   globstrings")
             elif self.doc_fpat is not None and self.term_fpat is not None:
-                doc_globstring = [os.path.join(out_data_dir, "doc_%s.csv" % f)
+                doc_globstring = [os.path.join(out_dir,
+                                               "doc_%s.csv" % f)
                                   for f in self.doc_fpat]
-                term_globstring = [os.path.join(out_data_dir, "term_%s.csv" % f)
+                term_globstring = [os.path.join(out_dir,
+                                                "term_%s.csv" % f)
                                    for f in self.term_fpat]
-                count_globstring = [os.path.join(out_data_dir, "count_%s_%s.csv" %
-                                                 doc_f, term_f)
+                count_globstring = [os.path.join(out_dir,
+                                                 "count_%s_%s.csv" %
+                                                 (doc_f, term_f))
                                     for term_f in self.term_fpat
                                     for doc_f in self.doc_fpat]
             else:
-                doc_globstring = os.path.join(out_data_dir, "doc_*.csv")
-                term_globstring = os.path.join(out_data_dir, "term_*.csv")
-                count_globstring = os.path.join(out_data_dir, "count_*.csv")
+                doc_globstring = os.path.join(out_dir, "doc_*.csv")
+                term_globstring = os.path.join(out_dir, "term_*.csv")
+                count_globstring = os.path.join(out_dir, "count_*.csv")
 
         self.doc_df.to_csv(doc_globstring, index=False, **kwargs)
         self.term_df.to_csv(term_globstring, index=False, **kwargs)
@@ -242,13 +261,14 @@ class DTM(object):
             n_doc_fpat = []
             for n in range(1, npartitions + 1):
                 n_start = partitions[n-1]
-                n_stop = partitons[n]
+                n_stop = partitions[n]
 
-                oc_fpat_part = self.doc_fpat[n_start:n_stop]
+                doc_fpat_part = self.doc_fpat[n_start:n_stop]
                 if len(doc_fpat_part) > 1:
-                    t_doc_fpat = doc_fpat_part[0] + "_T_" + doc_fpat_part[1]
+                    n_doc_fpat.append(doc_fpat_part[0] + "_T_" +
+                                      doc_fpat_part[-1])
                 elif len(doc_fpat_part) == 1:
-                    t_doc_fpat = doc_fpat_part[0]
+                    n_doc_fpat.append(doc_fpat_part[0])
                 else:
                     raise ValueError("doc_fpat doesn't align with parititons")
 
@@ -358,7 +378,7 @@ class DTM(object):
         # if we don't need the counts and docs we can do this completely
         # in parallel, otherwise we need to save the parallel component
         # for the inner loop
-        if not (doc and count):
+        if not (doc or count):
             for i, term_i in enumerate(term_del):
                 if alt is not None:
                     kwargs[alt] = alt_del[i]
@@ -375,9 +395,10 @@ class DTM(object):
                 if doc:
                     kwargs["doc_df"] = self.doc_df
                 if count:
-                    kwargs["count_df"] = self.count_df.partitions[i:(Dp*Vp):Vp]
+                    tmp = self.count_df.partitions[i:(Dp*Vp):Vp]
+                    kwargs["count_df"] = tmp
                 term_i = func(term_i, **kwargs)
-                del_l.append(del_fn(term_id))
+                del_l.append(del_fn(term_i))
 
         self.term_df = dd.from_delayed(del_l)
 
@@ -491,11 +512,6 @@ class DTM(object):
         # should only have to touch it once here, but that is going to require
         # that the we can map functions which return multiple values...
 
-        # if nothing was updated raise warning
-        if not (doc or term or count):
-            raise ValueError("reset_index should not be called when no data \
-                              has been changed")
-
         # first subset dfs based on updates
         if doc or term:
             self.map_axis(int_count, axis="count", doc=True, term=True,
@@ -519,10 +535,10 @@ class DTM(object):
                       alt_doc="doc_count", alt_term="term_count",
                       doc_count=doc_count, term_count=term_count,
                       doc_index=self.doc_index, term_index=self.term_index)
-        self.map_axis(reset_ind_mdata, axis="doc", alt="doc_count",
-                      doc_count=doc_count, doc_index=self.doc_index)
-        self.map_axis(reset_ind_term, axis="term", alt="term_count",
-                      term_count=term_count, term_index=self.term_index)
+        self.map_axis(reset_ind_mdata, axis="doc", alt="mdata_count",
+                      mdata_count=doc_count, mdata_index=self.doc_index)
+        self.map_axis(reset_ind_mdata, axis="term", alt="mdata_count",
+                      mdata_count=term_count, mdata_index=self.term_index)
 
 
     def merge(self, new_df, axis="doc", **kwargs):
@@ -558,16 +574,107 @@ class DTM(object):
         self.map_axis(add_part, alt="new_count", axis="count", **kwargs)
 
 
-def read_csv(in_data_dir=None, doc_globstring=None, term_globstring=None,
+    def ttpartition(self, CV_partitions=None, out_dir=None,
+                    out_dir_pattern=None):
+        """partitions the DTM into a list of tuples where each tuple is
+        a training/testing partition pair
+
+        Parameters
+        ----------
+        CV_partitions : None or scalar
+            if provided, we first repartition the data and then the list
+            will be of length CV_partitions, otherwise CV_partitions is
+            just the current number of partitions
+        out_dir : None or str
+            we write each partition (instead of returning the list) if
+            provided
+        out_dir_pattern : None or str
+            if provided, this is used as a pattern to fill in test and CV
+            labels, otherwise we just use %s_CV%d % (type, part)
+
+        Returns
+        -------
+        list of DTMs or None
+        """
+
+        # if a CV_partition count isn't provided, just partition over the
+        # docs
+        if CV_partitions is None:
+            CV_partitions = self.npartitions[0]
+            DTM = self
+        else:
+            DTM = self.copy()
+            DTM.repartition(CV_partitions)
+
+        if out_dir_pattern is None:
+            out_dir_pattern = "%s_CV%d"
+
+        res = []
+
+        Dp, Vp = DTM.npartitions
+
+        for part in range(CV_partitions):
+
+            # prep train_DTM
+            cpart_ind = list(range(Dp * Vp))
+            dpart_ind = list(range(Dp))
+
+            ctrain_ind = cpart_ind[:(part * Vp)] + cpart_ind[((part+1) * Vp):]
+            ctest_ind = cpart_ind[(part * Vp):((part+1) * Vp)]
+            dtrain_ind = dpart_ind[:part] + dpart_ind[(part+1):]
+            dtest_ind = dpart_ind[part:(part+1)]
+
+            train_DTM = DTM.copy()
+            train_DTM.count_df = train_DTM.count_df.partitions[ctrain_ind]
+            train_DTM.doc_df = train_DTM.doc_df.partitions[dtrain_ind]
+            if train_DTM.doc_fpat is not None:
+                train_DTM.doc_fpat = (train_DTM.doc_fpat[:part] +
+                                      train_DTM.doc_fpat[(part+1):])
+            train_DTM.npartitions = (Dp - 1, Vp)
+            train_DTM.reset_index(count=False, doc=False, term=False)
+
+            # prep test_DTM
+            test_DTM = DTM.copy()
+            test_DTM.count_df = test_DTM.count_df.partitions[ctest_ind]
+            test_DTM.doc_df = test_DTM.doc_df.partitions[dtest_ind]
+            if test_DTM.doc_fpat is not None:
+                test_DTM.doc_fpat = test_DTM.doc_fpat[part:(part+1)]
+            test_DTM.npartitions = (1, Vp)
+            test_DTM.reset_index(count=False, doc=False, term=False)
+
+            # store output
+            if out_dir:
+
+                train_dir = os.path.join(out_dir,
+                                         out_dir_pattern % ("train", part))
+                test_dir = os.path.join(out_dir,
+                                        out_dir_pattern % ("test", part))
+
+                os.makedirs(train_dir, exist_ok=True)
+                os.makedirs(test_dir, exist_ok=True)
+
+                print(train_DTM.doc_df.npartitions)
+
+                train_DTM.to_csv(out_dir=train_dir)
+                test_DTM.to_csv(out_dir=test_dir)
+
+            else:
+                res.append((train_DTM, test_DTM))
+
+        if len(res) > 0:
+            return res
+
+
+def read_csv(in_dir=None, doc_globstring=None, term_globstring=None,
              count_globstring=None, doc_index="doc_id", term_index="term_id",
              keep_fname=True, blocksize=None, **kwargs):
     """reads the csvs for each partition and populates DTM
 
     Parameters
     ----------
-    in_data_dir : str or None
-        if provided, we assume that all the files in this directory correspond
-        to a DTM and populate globstrings accordingly
+    in_dir : str or None
+        if provided, we assume that all the files in this directory
+        correspond to a DTM and populate globstrings accordingly
     doc_globstring : str or None
         globstring for doc_df files
     term_globstring : str or None
@@ -579,7 +686,8 @@ def read_csv(in_data_dir=None, doc_globstring=None, term_globstring=None,
     term_index : str
         label for term axis index
     keep_fname : bool
-        whether to keep a record of the filename patterns (for writing updated DTM)
+        whether to keep a record of the filename patterns (for writing
+        updated DTM)
     blocksize : scalar or None
         blocksize for dask dfs.  Given that we want our partitions to align
         we default this to None (so each partition corresponds to a file)
@@ -591,17 +699,18 @@ def read_csv(in_data_dir=None, doc_globstring=None, term_globstring=None,
 
     # TODO add support for file lists
 
-    if in_data_dir:
+    if in_dir:
         if doc_globstring or term_globstring or count_globstring:
-            raise ValueError("If in_data_dir provided don't provide \
+            raise ValueError("If in_dir provided don't provide \
                               globstrings")
         else:
-            doc_globstring = os.path.join(in_data_dir, "doc_*.csv")
-            term_globstring = os.path.join(in_data_dir, "term_*.csv")
-            count_globstring = os.path.join(in_data_dir, "count_*.csv")
+            doc_globstring = os.path.join(in_dir, "doc_*.csv")
+            term_globstring = os.path.join(in_dir, "term_*.csv")
+            count_globstring = os.path.join(in_dir, "count_*.csv")
 
 
     # load doc id info
+    doc_flist = glob.glob(doc_globstring)
     doc_flist.sort()
     if len(doc_flist) == 1:
         doc_df = dd.from_pandas(pd.read_csv(doc_flist[0], **kwargs),
@@ -610,6 +719,7 @@ def read_csv(in_data_dir=None, doc_globstring=None, term_globstring=None,
         doc_df = dd.read_csv(doc_flist, blocksize=blocksize, **kwargs)
 
     # load term id info
+    term_flist = glob.glob(term_globstring)
     term_flist.sort()
     if len(term_flist) == 1:
         term_df = dd.from_pandas(pd.read_csv(term_flist[0], **kwargs),
@@ -618,6 +728,7 @@ def read_csv(in_data_dir=None, doc_globstring=None, term_globstring=None,
         term_df = dd.read_csv(term_flist, blocksize=blocksize, **kwargs)
 
     # load counts
+    count_flist = glob.glob(count_globstring)
     count_flist.sort()
     if len(count_flist) == 1:
         count_df = dd.from_pandas(pd.read_csv(count_flist[0], **kwargs),

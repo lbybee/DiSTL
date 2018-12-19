@@ -2,7 +2,8 @@
 This is the core class for supporting a DTM based around dask-dataframes.
 
 Essentially the key here is to recognize that a sparse matrix can be
-represented well by a trio of data-frames with mapping indices
+represented well by a trio of data-frames with linked indices and the DTM
+class contains sets of common operations for this class of data.
 """
 from .DTM_part_methods import *
 from dask import delayed
@@ -12,12 +13,6 @@ import numpy as np
 import difflib
 import glob
 import os
-
-# TODO currently, we aren't returning new copies of the DTM for the various
-# methods.  This approach does not align with dask/pandas and should probably
-# be changed (though it might align well with the database interpretation).
-
-# TODO when you repartition the names aren't properly stored
 
 
 def _prep_fnames(doc_globstring, term_globstring):
@@ -34,6 +29,12 @@ def _prep_fnames(doc_globstring, term_globstring):
     -------
     None
     """
+
+    # TODO note that this currently doesn't "truly" find the unique
+    # component of each file name.  It compares with the globstring and
+    # it may be the case that the resulting files still have some shared
+    # component (e.g. if globstring is doc_*.csv and all doc files are
+    # called doc_id_*.csv), this should be fixed
 
     # get file lists
     doc_flist = glob.glob(doc_globstring)
@@ -122,66 +123,68 @@ class DTM(object):
 
 
     def copy(self):
-        """generates a copy of the DTM and returns that"""
+        """generates a copy of the DTM and returns that
 
-        cDTM = DTM(doc_df=self.doc_df.copy(),
-                   term_df=self.term_df.copy(),
-                   count_df=self.count_df.copy(),
-                   doc_index=self.doc_index,
-                   term_index=self.term_index,
-                   doc_fpat=self.doc_fpat,
-                   term_fpat=self.term_fpat)
+        Returns
+        -------
+        copy of current DTM
+        """
 
-        return cDTM
+        dtm = DTM(doc_df=self.doc_df.copy(),
+                  term_df=self.term_df.copy(),
+                  count_df=self.count_df.copy(),
+                  doc_index=self.doc_index,
+                  term_index=self.term_index,
+                  doc_fpat=self.doc_fpat,
+                  term_fpat=self.term_fpat)
+
+        return dtm
 
 
-    def to_csv(self, out_dir=None, doc_globstring=None,
-               term_globstring=None, count_globstring=None, **kwargs):
+    def to_csv(self, out_dir=None, doc_urlpath=None,
+               term_urlpath=None, count_urlpath=None, **kwargs):
         """writes the current DTM to the specified files
 
         Parameters
         ----------
         out_dir : str or None
             location directory where results should be stored
-        doc_globstring : str or None
-            globstring for doc_df
-        term_globstring : str or None
-            globstring for term_df
-        count_globstring : str or None
-            globstring for count_df
+        doc_urlpath : str or None
+            urlpath for doc_df
+        term_urlpath : str or None
+            urlpath for term_df
+        count_urlpath : str or None
+            urlpath for count_df
 
         Returns
         -------
         None
         """
 
-        # TODO if fpats are provided, the globstrings are really lists, should
-        # probably rename
-
         if out_dir:
-            if doc_globstring or term_globstring or count_globstring:
+            if doc_urlpath or term_urlpath or count_urlpath:
                 raise ValueError("If out_dir provided don't provide \
-                                  globstrings")
+                                  urlpaths")
             elif self.doc_fpat is not None and self.term_fpat is not None:
-                doc_globstring = [os.path.join(out_dir,
+                doc_urlpath = [os.path.join(out_dir,
                                                "doc_%s.csv" % f)
                                   for f in self.doc_fpat]
-                term_globstring = [os.path.join(out_dir,
+                term_urlpath = [os.path.join(out_dir,
                                                 "term_%s.csv" % f)
                                    for f in self.term_fpat]
-                count_globstring = [os.path.join(out_dir,
+                count_urlpath = [os.path.join(out_dir,
                                                  "count_%s_%s.csv" %
                                                  (doc_f, term_f))
                                     for term_f in self.term_fpat
                                     for doc_f in self.doc_fpat]
             else:
-                doc_globstring = os.path.join(out_dir, "doc_*.csv")
-                term_globstring = os.path.join(out_dir, "term_*.csv")
-                count_globstring = os.path.join(out_dir, "count_*.csv")
+                doc_urlpath = os.path.join(out_dir, "doc_*.csv")
+                term_urlpath = os.path.join(out_dir, "term_*.csv")
+                count_urlpath = os.path.join(out_dir, "count_*.csv")
 
-        self.doc_df.to_csv(doc_globstring, index=False, **kwargs)
-        self.term_df.to_csv(term_globstring, index=False, **kwargs)
-        self.count_df.to_csv(count_globstring, index=False, **kwargs)
+        self.doc_df.to_csv(doc_urlpath, index=False, **kwargs)
+        self.term_df.to_csv(term_urlpath, index=False, **kwargs)
+        self.count_df.to_csv(count_urlpath, index=False, **kwargs)
 
 
     def repartition_doc(self, npartitions):
@@ -194,22 +197,22 @@ class DTM(object):
 
         Returns
         -------
-        None
+        updated DTM
 
         Notes
         -----
         This only supports shrinking the number of partitions
         """
 
-        # TODO currently this only supports shrinking the number of
-        # partitions
-        if npartitions > self.doc_df.npartitions:
+        dtm = self.copy()
+
+        if npartitions > dtm.doc_df.npartitions:
             raise ValueError("repartition currently only supports shrinking \
                               the existing number of partitions.  Therefore \
                               new npartitions must be less than existing.")
 
-        doc_fn = lambda x: x[[self.doc_index]].count()
-        doc_count = self.doc_df.map_partitions(doc_fn).compute()
+        doc_fn = lambda x: x[[dtm.doc_index]].count()
+        doc_count = dtm.doc_df.map_partitions(doc_fn).compute()
         D = doc_count.sum()
         stp = D / npartitions
         doc_cum_count = doc_count.cumsum()
@@ -221,14 +224,14 @@ class DTM(object):
             partitions.append(chk)
         partitions.append(len(doc_cum_count))
 
-        term_part = self.term_df.npartitions
+        term_part = dtm.term_df.npartitions
 
         # init fn
         del_concat = delayed(pd.concat)
 
         # prep delayed data
-        doc_del = self.doc_df.to_delayed()
-        count_del = self.count_df.to_delayed()
+        doc_del = dtm.doc_df.to_delayed()
+        count_del = dtm.count_df.to_delayed()
 
         doc_del_l = []
         count_del_l = []
@@ -251,18 +254,18 @@ class DTM(object):
                 count_del_nt = count_del[t_start:t_stop:t_stp]
                 count_del_l.append(del_concat(count_del_nt))
 
-        self.doc_df = dd.from_delayed(doc_del_l)
-        self.count_df = dd.from_delayed(count_del_l)
+        dtm.doc_df = dd.from_delayed(doc_del_l)
+        dtm.count_df = dd.from_delayed(count_del_l)
 
         # if we are storing fname patterns combine these as well
-        if self.doc_fpat is not None:
+        if dtm.doc_fpat is not None:
 
             n_doc_fpat = []
             for n in range(1, npartitions + 1):
                 n_start = partitions[n-1]
                 n_stop = partitions[n]
 
-                doc_fpat_part = self.doc_fpat[n_start:n_stop]
+                doc_fpat_part = dtm.doc_fpat[n_start:n_stop]
                 if len(doc_fpat_part) > 1:
                     n_doc_fpat.append(doc_fpat_part[0] + "_T_" +
                                       doc_fpat_part[-1])
@@ -271,29 +274,37 @@ class DTM(object):
                 else:
                     raise ValueError("doc_fpat doesn't align with parititons")
 
-            self.doc_fpat = n_doc_fpat
+            dtm.doc_fpat = n_doc_fpat
 
-        self.npartitions = (self.doc_df.npartitions,
-                            self.term_df.npartitions)
+        dtm.npartitions = (dtm.doc_df.npartitions,
+                            dtm.term_df.npartitions)
+
+        return dtm
 
 
     def repartition_term(self):
         """repartitions the DTM along the term axis
 
+        Returns
+        -------
+        updated DTM
+
         Notes
         -----
-        currently, this only support collapsing the term partitions to 1
+        This only support collapsing the term partitions to 1
         """
 
+        dtm = self.copy()
+
         # collapsing terms is simple
-        self.term_df = self.term_df.repartition(npartitions=1)
+        dtm.term_df = dtm.term_df.repartition(npartitions=1)
 
         # now we need to collapse each term partition
         del_concat = delayed(pd.concat)
 
-        count_del = self.count_df.to_delayed()
+        count_del = dtm.count_df.to_delayed()
 
-        Dp, Vp = self.npartitions
+        Dp, Vp = dtm.npartitions
 
         count_del_l = []
 
@@ -302,18 +313,20 @@ class DTM(object):
             count_del_nt = count_del[(d * Vp):((d + 1) * Vp)]
             count_del_l.append(del_concat(count_del_nt))
 
-        self.count_df = dd.from_delayed(count_del_l)
+        dtm.count_df = dd.from_delayed(count_del_l)
 
         # now reset fpatterns if provided
-        if self.term_fpat is not None:
-            self.term_fpat = [self.term_fpat[0] + "_T_" + self.term_fpat[1]]
+        if dtm.term_fpat is not None:
+            dtm.term_fpat = [dtm.term_fpat[0] + "_T_" + dtm.term_fpat[1]]
 
         # finally reset npartitions
-        self.npartitions = (self.doc_df.npartitions,
-                            self.term_df.npartitions)
+        dtm.npartitions = (dtm.doc_df.npartitions,
+                            dtm.term_df.npartitions)
+
+        return dtm
 
 
-    def repartition_axis(self, npartitions=None, axis="doc"):
+    def repartition(self, npartitions=None, axis="doc"):
         """repartitions along the provided axis
 
         Parameters
@@ -325,7 +338,7 @@ class DTM(object):
 
         Returns
         -------
-        None
+        updated DTM
         """
 
         if axis == "doc":
@@ -333,17 +346,17 @@ class DTM(object):
                 raise ValueError("If repartitioning over docs, npartitions \
                                   must be provided")
             else:
-                self.repartition_doc(npartitions)
+                return self.repartition_doc(npartitions)
 
         elif axis == "term":
             if npartitions is not None:
                 raise ValueError("If repartitioning over terms, npartitions \
                                   should not be provided")
             else:
-                self.repartition_term()
+                return self.repartition_term()
 
 
-    def map_doc(self, func, alt=None, term=False, count=False, **kwargs):
+    def map_doc(dtm, func, alt=None, term=False, count=False, **kwargs):
         """maps the provided method over the doc partitions
 
         Parameters
@@ -364,7 +377,7 @@ class DTM(object):
 
         Returns
         -------
-        None
+        updated DTM
 
         Notes
         -----
@@ -374,15 +387,17 @@ class DTM(object):
         as lists of values
         """
 
+        dtm = dtm.copy()
+
         if alt is not None:
             alt_df = kwargs.pop(alt)
             alt_del = alt_df.to_delayed()
 
-        doc_del = self.doc_df.to_delayed()
-        term_del = self.term_df.to_delayed()
-        count_del = self.count_df.to_delayed()
+        doc_del = dtm.doc_df.to_delayed()
+        term_del = dtm.term_df.to_delayed()
+        count_del = dtm.count_df.to_delayed()
 
-        Dp, Vp = self.npartitions
+        Dp, Vp = dtm.npartitions
 
         del_l = []
         del_fn = delayed(func)
@@ -396,7 +411,9 @@ class DTM(object):
                 kwargs["count_df"] = count_del[(i*Vp):((i+1)*Vp)]
             del_l.append(del_fn(doc_i, **kwargs))
 
-        self.doc_df = dd.from_delayed(del_l)
+        dtm.doc_df = dd.from_delayed(del_l)
+
+        return dtm
 
 
     def map_term(self, func, alt=None, doc=False, count=False, **kwargs):
@@ -420,7 +437,7 @@ class DTM(object):
 
         Returns
         -------
-        None
+        updated DTM
 
         Notes
         -----
@@ -430,13 +447,15 @@ class DTM(object):
         reserve delayed/parallel estimation for within the function
         """
 
+        dtm = self.copy()
+
         if alt is not None:
             alt_df = kwargs.pop(alt)
             alt_del = alt_df.to_delayed()
 
-        term_del = self.term_df.to_delayed()
+        term_del = dtm.term_df.to_delayed()
 
-        Dp, Vp = self.npartitions
+        Dp, Vp = dtm.npartitions
 
         del_l = []
 
@@ -458,14 +477,16 @@ class DTM(object):
                 if alt is not None:
                     kwargs[alt] = alt_del[i]
                 if doc:
-                    kwargs["doc_df"] = self.doc_df
+                    kwargs["doc_df"] = dtm.doc_df
                 if count:
-                    tmp = self.count_df.partitions[i:(Dp*Vp):Vp]
+                    tmp = dtm.count_df.partitions[i:(Dp*Vp):Vp]
                     kwargs["count_df"] = tmp
                 term_i = func(term_i, **kwargs)
                 del_l.append(del_fn(term_i))
 
-        self.term_df = dd.from_delayed(del_l)
+        dtm.term_df = dd.from_delayed(del_l)
+
+        return dtm
 
 
     def map_count(self, func, alt=None, alt_doc=None, alt_term=None,
@@ -500,8 +521,10 @@ class DTM(object):
 
         Returns
         -------
-        None
+        updated DTM
         """
+
+        dtm = self.copy()
 
         # prep delayed values for additional metadata
         if alt is not None:
@@ -514,11 +537,11 @@ class DTM(object):
             alt_term_df = kwargs.pop(alt_term)
             alt_term_del = alt_term_df.to_delayed()
 
-        doc_del = self.doc_df.to_delayed()
-        term_del = self.term_df.to_delayed()
-        count_del = self.count_df.to_delayed()
+        doc_del = dtm.doc_df.to_delayed()
+        term_del = dtm.term_df.to_delayed()
+        count_del = dtm.count_df.to_delayed()
 
-        Dp, Vp = self.npartitions
+        Dp, Vp = dtm.npartitions
 
         del_l = []
         del_fn = delayed(func)
@@ -538,18 +561,32 @@ class DTM(object):
                     kwargs["term_df"] = term_j
                 del_l.append(del_fn(count_del[q], **kwargs))
 
-        self.count_df = dd.from_delayed(del_l)
+        dtm.count_df = dd.from_delayed(del_l)
+
+        return dtm
 
 
-    def map_axis(self, func, axis, **kwargs):
-        """wrapper function for generally mapping over axes"""
+    def map_partitions(self, func, axis, **kwargs):
+        """wrapper function for generally mapping over axes
+
+        Parameters
+        ----------
+        func : python funct
+            method to apply to corresponding axis over the partitions
+        axis : str
+            label for axis to map
+
+        Returns
+        -------
+        updated DTM
+        """
 
         if axis == "doc":
-            self.map_doc(func, **kwargs)
+            return self.map_doc(func, **kwargs)
         elif axis == "term":
-            self.map_term(func, **kwargs)
+            return self.map_term(func, **kwargs)
         elif axis == "count":
-            self.map_count(func, **kwargs)
+            return self.map_count(func, **kwargs)
 
 
     def reset_index(self, doc=True, term=True, count=True):
@@ -570,44 +607,61 @@ class DTM(object):
 
         Returns
         -------
-        None
+        updated DTM
         """
 
         # TODO currently we have to touch the metadata twice, ideally we
         # should only have to touch it once here, but that is going to require
         # that the we can map functions which return multiple values...
 
+        dtm = self.copy()
+
         # first subset dfs based on updates
         if doc or term:
-            self.map_axis(int_count, axis="count", doc=True, term=True,
-                          doc_index=self.doc_index,
-                          term_index=self.term_index)
+            dtm = dtm.map_axis(int_count, axis="count", doc=True, term=True,
+                               doc_index=dtm.doc_index,
+                               term_index=dtm.term_index)
         if count:
-            self.map_axis(int_doc, axis="doc", count=True,
-                          doc_index=self.doc_index)
-            self.map_axis(int_term, axis="term", count=True,
-                          term_index=self.term_index)
+            dtm = dtm.map_axis(int_doc, axis="doc", count=True,
+                               doc_index=dtm.doc_index)
+            dtm = dtm.map_axis(int_term, axis="term", count=True,
+                               term_index=self.term_index)
 
         # now generate cumulative counts to share new df size between
         # partitions
-        doc_fn = lambda x: x[[self.doc_index]].count()
-        doc_count = self.doc_df.map_partitions(doc_fn).cumsum()
-        term_fn = lambda x: x[[self.term_index]].count()
-        term_count = self.term_df.map_partitions(term_fn).cumsum()
+        doc_fn = lambda x: x[[dtm.doc_index]].count()
+        doc_count = dtm.doc_df.map_partitions(doc_fn).cumsum()
+        term_fn = lambda x: x[[dtm.term_index]].count()
+        term_count = dtm.term_df.map_partitions(term_fn).cumsum()
 
         #  now reset
-        self.map_axis(reset_ind_count, axis="count", doc=True, term=True,
-                      alt_doc="doc_count", alt_term="term_count",
-                      doc_count=doc_count, term_count=term_count,
-                      doc_index=self.doc_index, term_index=self.term_index)
-        self.map_axis(reset_ind_mdata, axis="doc", alt="mdata_count",
-                      mdata_count=doc_count, mdata_index=self.doc_index)
-        self.map_axis(reset_ind_mdata, axis="term", alt="mdata_count",
-                      mdata_count=term_count, mdata_index=self.term_index)
+        dtm = dtm.map_axis(reset_ind_count, axis="count", doc=True,
+                           term=True, alt_doc="doc_count",
+                           alt_term="term_count", doc_count=doc_count,
+                           term_count=term_count,
+                      doc_index=dtm.doc_index, term_index=dtm.term_index)
+        dtm = dtm.map_axis(reset_ind_mdata, axis="doc", alt="mdata_count",
+                           mdata_count=doc_count, mdata_index=dtm.doc_index)
+        dtm = dtm.map_axis(reset_ind_mdata, axis="term", alt="mdata_count",
+                           mdata_count=term_count, mdata_index=dtm.term_index)
+
+        return dtm
 
 
     def merge(self, new_df, axis="doc", **kwargs):
-        """merge another dask-dataframe along the specified axis"""
+        """merge another dask-dataframe along the specified axis
+
+        Parameters
+        ----------
+        new_df : dask data-frame
+            new dask-dataframe which we wish to merge to one axis
+        axis : str
+            label for axis which we wish to merge new_df
+
+        Returns
+        -------
+        updated DTM
+        """
 
         if axis == "doc":
             comp_df = self.doc_df
@@ -619,15 +673,25 @@ class DTM(object):
             comp_df = self.count_df
             lab = "count_df"
         if comp_df.npartitions != new_df.npartitions:
-            raise ValueError("new_df and %s must share same npartitions" %
-                             lab)
+            raise ValueError("new_df and %s must have same npartitions" % lab)
 
         kwargs["new_df"] = new_df
-        self.map_axis(merge_part, alt="new_df", axis=axis, **kwargs)
+        return self.map_axis(merge_part, alt="new_df", axis=axis, **kwargs)
 
 
     def add(self, new_dtm, **kwargs):
-        """sum two DTMs with same doc and terms"""
+        """sum two DTMs with same doc and terms
+
+        Parameters
+        ----------
+        new_dtm : DTM instance
+            another DTM which we assume has comparable dimensions/partitions
+            to the current one
+
+        Returns
+        -------
+        updated DTM
+        """
 
         # all metadata must be the same between DTMs to add
         if self.doc_df != new_dtm.doc_df:
@@ -636,7 +700,7 @@ class DTM(object):
             raise ValueError("main and new DTM must share same term_df")
 
         kwargs["new_count"] = new_dtm.count_df
-        self.map_axis(add_part, alt="new_count", axis="count", **kwargs)
+        return self.map_axis(add_part, alt="new_count", axis="count", **kwargs)
 
 
     def ttpartition(self, CV_partitions=None, out_dir=None,
@@ -666,21 +730,21 @@ class DTM(object):
         # docs
         if CV_partitions is None:
             CV_partitions = self.npartitions[0]
-            DTM = self
+            dtm = self
         else:
-            DTM = self.copy()
-            DTM.repartition(CV_partitions)
+            dtm = self.copy()
+            dtm.repartition(CV_partitions)
 
         if out_dir_pattern is None:
             out_dir_pattern = "%s_CV%d"
 
         res = []
 
-        Dp, Vp = DTM.npartitions
+        Dp, Vp = dtm.npartitions
 
         for part in range(CV_partitions):
 
-            # prep train_DTM
+            # prep train_dtm
             cpart_ind = list(range(Dp * Vp))
             dpart_ind = list(range(Dp))
 
@@ -689,23 +753,23 @@ class DTM(object):
             dtrain_ind = dpart_ind[:part] + dpart_ind[(part+1):]
             dtest_ind = dpart_ind[part:(part+1)]
 
-            train_DTM = DTM.copy()
-            train_DTM.count_df = train_DTM.count_df.partitions[ctrain_ind]
-            train_DTM.doc_df = train_DTM.doc_df.partitions[dtrain_ind]
-            if train_DTM.doc_fpat is not None:
-                train_DTM.doc_fpat = (train_DTM.doc_fpat[:part] +
-                                      train_DTM.doc_fpat[(part+1):])
-            train_DTM.npartitions = (Dp - 1, Vp)
-            train_DTM.reset_index(count=False, doc=False, term=False)
+            train_dtm = dtm.copy()
+            train_dtm.count_df = train_dtm.count_df.partitions[ctrain_ind]
+            train_dtm.doc_df = train_dtm.doc_df.partitions[dtrain_ind]
+            if train_dtm.doc_fpat is not None:
+                train_dtm.doc_fpat = (train_dtm.doc_fpat[:part] +
+                                      train_dtm.doc_fpat[(part+1):])
+            train_dtm.npartitions = (Dp - 1, Vp)
+            train_dtm.reset_index(count=False, doc=False, term=False)
 
-            # prep test_DTM
-            test_DTM = DTM.copy()
-            test_DTM.count_df = test_DTM.count_df.partitions[ctest_ind]
-            test_DTM.doc_df = test_DTM.doc_df.partitions[dtest_ind]
-            if test_DTM.doc_fpat is not None:
-                test_DTM.doc_fpat = test_DTM.doc_fpat[part:(part+1)]
-            test_DTM.npartitions = (1, Vp)
-            test_DTM.reset_index(count=False, doc=False, term=False)
+            # prep test_dtm
+            test_dtm = dtm.copy()
+            test_dtm.count_df = test_dtm.count_df.partitions[ctest_ind]
+            test_dtm.doc_df = test_dtm.doc_df.partitions[dtest_ind]
+            if test_dtm.doc_fpat is not None:
+                test_dtm.doc_fpat = test_dtm.doc_fpat[part:(part+1)]
+            test_dtm.npartitions = (1, Vp)
+            test_dtm.reset_index(count=False, doc=False, term=False)
 
             # store output
             if out_dir:
@@ -718,13 +782,13 @@ class DTM(object):
                 os.makedirs(train_dir, exist_ok=True)
                 os.makedirs(test_dir, exist_ok=True)
 
-                print(train_DTM.doc_df.npartitions)
+                print(train_dtm.doc_df.npartitions)
 
-                train_DTM.to_csv(out_dir=train_dir)
-                test_DTM.to_csv(out_dir=test_dir)
+                train_dtm.to_csv(out_dir=train_dir)
+                test_dtm.to_csv(out_dir=test_dir)
 
             else:
-                res.append((train_DTM, test_DTM))
+                res.append((train_dtm, test_dtm))
 
         if len(res) > 0:
             return res

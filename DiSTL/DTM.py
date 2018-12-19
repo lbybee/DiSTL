@@ -184,8 +184,8 @@ class DTM(object):
         self.count_df.to_csv(count_globstring, index=False, **kwargs)
 
 
-    def repartition(self, npartitions):
-        """repartition the DTM
+    def repartition_doc(self, npartitions):
+        """repartition the DTM along the doc axis
 
         Parameters
         ----------
@@ -198,8 +198,7 @@ class DTM(object):
 
         Notes
         -----
-        1. This is only over the doc axis
-        2. This only supports shrinking the number of partitions
+        This only supports shrinking the number of partitions
         """
 
         # TODO currently this only supports shrinking the number of
@@ -225,7 +224,7 @@ class DTM(object):
         term_part = self.term_df.npartitions
 
         # init fn
-        del_fn = delayed(pd.concat)
+        del_concat = delayed(pd.concat)
 
         # prep delayed data
         doc_del = self.doc_df.to_delayed()
@@ -241,7 +240,7 @@ class DTM(object):
             n_stop = partitions[n]
             doc_del_n = doc_del[n_start:n_stop]
 
-            doc_del_l.append(del_fn(doc_del_n))
+            doc_del_l.append(del_concat(doc_del_n))
 
             for t in range(term_part):
 
@@ -250,7 +249,7 @@ class DTM(object):
                 t_stp = term_part
 
                 count_del_nt = count_del[t_start:t_stop:t_stp]
-                count_del_l.append(del_fn(count_del_nt))
+                count_del_l.append(del_concat(count_del_nt))
 
         self.doc_df = dd.from_delayed(doc_del_l)
         self.count_df = dd.from_delayed(count_del_l)
@@ -276,6 +275,72 @@ class DTM(object):
 
         self.npartitions = (self.doc_df.npartitions,
                             self.term_df.npartitions)
+
+
+    def repartition_term(self):
+        """repartitions the DTM along the term axis
+
+        Notes
+        -----
+        currently, this only support collapsing the term partitions to 1
+        """
+
+        # collapsing terms is simple
+        self.term_df = self.term_df.repartition(npartitions=1)
+
+        # now we need to collapse each term partition
+        del_concat = delayed(pd.concat)
+
+        count_del = self.count_df.to_delayed()
+
+        Dp, Vp = self.npartitions
+
+        count_del_l = []
+
+        for d in range(Dp):
+
+            count_del_nt = count_del[(d * Vp):((d + 1) * Vp)]
+            count_del_l.append(del_concat(count_del_nt))
+
+        self.count_df = dd.from_delayed(count_del_l)
+
+        # now reset fpatterns if provided
+        if self.term_fpat is not None:
+            self.term_fpat = [self.term_fpat[0] + "_T_" + self.term_fpat[1]]
+
+        # finally reset npartitions
+        self.npartitions = (self.doc_df.npartitions,
+                            self.term_df.npartitions)
+
+
+    def repartition_axis(self, npartitions=None, axis="doc"):
+        """repartitions along the provided axis
+
+        Parameters
+        ----------
+        npartitions : scalar or None
+            number of new partitions, must not be None if axis == doc
+        axis : str
+            label for axis over which to repartition
+
+        Returns
+        -------
+        None
+        """
+
+        if axis == "doc":
+            if npartitions is None:
+                raise ValueError("If repartitioning over docs, npartitions \
+                                  must be provided")
+            else:
+                self.repartition_doc(npartitions)
+
+        elif axis == "term":
+            if npartitions is not None:
+                raise ValueError("If repartitioning over terms, npartitions \
+                                  should not be provided")
+            else:
+                self.repartition_term()
 
 
     def map_doc(self, func, alt=None, term=False, count=False, **kwargs):

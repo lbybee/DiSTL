@@ -141,6 +141,24 @@ class DTM(object):
         return dtm
 
 
+    def persist(self):
+        """persists the underlying data-frames
+
+        Returns
+        -------
+        copy of current DTM
+        """
+
+        dtm = self.copy()
+
+        dtm.doc_df = dtm.doc_df.persist()
+        dtm.term_df = dtm.term_df.persist()
+        dtm.count_df = dtm.count_df.persist()
+
+        return dtm
+
+
+
     def to_csv(self, out_dir=None, doc_urlpath=None,
                term_urlpath=None, count_urlpath=None, **kwargs):
         """writes the current DTM to the specified files
@@ -201,7 +219,10 @@ class DTM(object):
 
         Notes
         -----
-        This only supports shrinking the number of partitions
+        - Only supports shrinking the number of partitions
+        - We attempt to optimize the partitions so that the actual docs
+          are spread as evenly as possible.  Therefore we base the new
+          partitions on the doc counts within the old partitions.
         """
 
         dtm = self.copy()
@@ -356,7 +377,8 @@ class DTM(object):
                 return self.repartition_term()
 
 
-    def map_doc(dtm, func, alt=None, term=False, count=False, **kwargs):
+    def map_doc(dtm, func, alt=None, term=False, count=False,
+                kwds_l=None, **kwargs):
         """maps the provided method over the doc partitions
 
         Parameters
@@ -374,6 +396,10 @@ class DTM(object):
         count : bool
             whether or not the comparable count_df partitions will be passed
             into func along with doc_df (as a list)
+        kwds_l : list or None
+            if provided, this corresponds to a list of key-words which
+            are partition specific, therefore it should be the same length
+            as the term partitions
 
         Returns
         -------
@@ -389,6 +415,14 @@ class DTM(object):
 
         dtm = dtm.copy()
 
+        Dp, Vp = dtm.npartitions
+
+        if kwds_l is None:
+            kwds_l = [{} for i in range(Dp)]
+        if len(kwds_l) != Dp:
+            raise ValueError("kwds_l needs to be same length as doc \
+                              partitions")
+
         if alt is not None:
             alt_df = kwargs.pop(alt)
             alt_del = alt_df.to_delayed()
@@ -396,8 +430,6 @@ class DTM(object):
         doc_del = dtm.doc_df.to_delayed()
         term_del = dtm.term_df.to_delayed()
         count_del = dtm.count_df.to_delayed()
-
-        Dp, Vp = dtm.npartitions
 
         del_l = []
         del_fn = delayed(func)
@@ -409,14 +441,16 @@ class DTM(object):
                 kwargs["term_df"] = term_del
             if count:
                 kwargs["count_df"] = count_del[(i*Vp):((i+1)*Vp)]
-            del_l.append(del_fn(doc_i, **kwargs))
+            kwds = {**kwds_l[i], **kwargs}
+            del_l.append(del_fn(doc_i, **kwds))
 
         dtm.doc_df = dd.from_delayed(del_l)
 
         return dtm
 
 
-    def map_term(self, func, alt=None, doc=False, count=False, **kwargs):
+    def map_term(self, func, alt=None, doc=False, count=False,
+                 kwds_l=None, **kwargs):
         """maps the provided method over the term partitions
 
         Parameters
@@ -434,6 +468,10 @@ class DTM(object):
         count : bool
             whether or not the comparable count_df partitions will be passed
             into func along with term_df
+        kwds_l : list or None
+            if provided, this corresponds to a list of key-words which
+            are partition specific, therefore it should be the same length
+            as the term partitions
 
         Returns
         -------
@@ -449,13 +487,19 @@ class DTM(object):
 
         dtm = self.copy()
 
+        Dp, Vp = dtm.npartitions
+
+        if kwds_l is None:
+            kwds_l = [{} for i in range(Vp)]
+        if len(kwds_l) != Vp:
+            raise ValueError("kwds_l needs to be same length as term \
+                              partitions")
+
         if alt is not None:
             alt_df = kwargs.pop(alt)
             alt_del = alt_df.to_delayed()
 
         term_del = dtm.term_df.to_delayed()
-
-        Dp, Vp = dtm.npartitions
 
         del_l = []
 
@@ -466,7 +510,8 @@ class DTM(object):
             for i, term_i in enumerate(term_del):
                 if alt is not None:
                     kwargs[alt] = alt_del[i]
-                del_l.append(delayed(func)(term_i, **kwargs))
+                kwds = {**kwds_l[i], **kwargs}
+                del_l.append(delayed(func)(term_i, **kwds))
 
         else:
 
@@ -481,7 +526,8 @@ class DTM(object):
                 if count:
                     tmp = dtm.count_df.partitions[i:(Dp*Vp):Vp]
                     kwargs["count_df"] = tmp
-                term_i = func(term_i, **kwargs)
+                kwds = {**kwds_l[i], **kwargs}
+                term_i = func(term_i, **kwds)
                 del_l.append(del_fn(term_i))
 
         dtm.term_df = dd.from_delayed(del_l)
@@ -490,7 +536,7 @@ class DTM(object):
 
 
     def map_count(self, func, alt=None, alt_doc=None, alt_term=None,
-                  doc=False, term=False, **kwargs):
+                  doc=False, term=False, kwds_l=None, **kwargs):
         """maps the provided method over the count partitions
 
         Parameters
@@ -518,6 +564,10 @@ class DTM(object):
         term : bool
             whether or not the comparable term_df partition will be passed
             into func along with count_df
+        kwds_l : list or None
+            if provided, this corresponds to a list of key-words which
+            are partition specific, therefore it should be the same length
+            as the count partitions
 
         Returns
         -------
@@ -525,6 +575,14 @@ class DTM(object):
         """
 
         dtm = self.copy()
+
+        Dp, Vp = dtm.npartitions
+
+        if kwds_l is None:
+            kwds_l = [{} for i in range(Dp * Vp)]
+        if len(kwds_l) != (Dp * Vp):
+            raise ValueError("kwds_l needs to be same length as count \
+                              partitions")
 
         # prep delayed values for additional metadata
         if alt is not None:
@@ -540,8 +598,6 @@ class DTM(object):
         doc_del = dtm.doc_df.to_delayed()
         term_del = dtm.term_df.to_delayed()
         count_del = dtm.count_df.to_delayed()
-
-        Dp, Vp = dtm.npartitions
 
         del_l = []
         del_fn = delayed(func)
@@ -559,15 +615,17 @@ class DTM(object):
                     kwargs["doc_df"] = doc_i
                 if term:
                     kwargs["term_df"] = term_j
-                del_l.append(del_fn(count_del[q], **kwargs))
+                kwds = {**kwds_l[q], **kwargs}
+                del_l.append(del_fn(count_del[q], **kwds))
 
         dtm.count_df = dd.from_delayed(del_l)
 
         return dtm
 
 
-    def map_partitions(self, func, axis, **kwargs):
-        """wrapper function for generally mapping over axes
+    def map_partitions(self, func, axis="doc", **kwargs):
+        """wrapper function for generally mapping over partitions along
+        a provided axis
 
         Parameters
         ----------
@@ -596,14 +654,11 @@ class DTM(object):
         Parameters
         ----------
         doc : bool
-            whether or not updates have been made to doc_df which change
-            the number of elements in each partition
+            whether to constrain doc_df based on counts
         term : bool
-            whether or not updates have been made to term_df which change
-            the number of elements in each partition
+            whether to constrain term_df based on counts
         count : bool
-            whether or not updates have been made to count_df which change
-            the number of elements in each partition
+            whether to constrain count_df based on doc_df and term_df
 
         Returns
         -------
@@ -617,15 +672,16 @@ class DTM(object):
         dtm = self.copy()
 
         # first subset dfs based on updates
-        if doc or term:
-            dtm = dtm.map_axis(int_count, axis="count", doc=True, term=True,
-                               doc_index=dtm.doc_index,
-                               term_index=dtm.term_index)
         if count:
-            dtm = dtm.map_axis(int_doc, axis="doc", count=True,
-                               doc_index=dtm.doc_index)
-            dtm = dtm.map_axis(int_term, axis="term", count=True,
-                               term_index=self.term_index)
+            dtm = dtm.map_partitions(int_count, axis="count", doc=True,
+                                     term=True, doc_index=dtm.doc_index,
+                                     term_index=dtm.term_index)
+        if doc:
+            dtm = dtm.map_partitions(int_doc, axis="doc", count=True,
+                                     doc_index=dtm.doc_index)
+        if term:
+            dtm = dtm.map_partitions(int_term, axis="term", count=True,
+                                     term_index=self.term_index)
 
         # now generate cumulative counts to share new df size between
         # partitions
@@ -635,17 +691,45 @@ class DTM(object):
         term_count = dtm.term_df.map_partitions(term_fn).cumsum()
 
         #  now reset
-        dtm = dtm.map_axis(reset_ind_count, axis="count", doc=True,
-                           term=True, alt_doc="doc_count",
-                           alt_term="term_count", doc_count=doc_count,
-                           term_count=term_count,
-                      doc_index=dtm.doc_index, term_index=dtm.term_index)
-        dtm = dtm.map_axis(reset_ind_mdata, axis="doc", alt="mdata_count",
-                           mdata_count=doc_count, mdata_index=dtm.doc_index)
-        dtm = dtm.map_axis(reset_ind_mdata, axis="term", alt="mdata_count",
-                           mdata_count=term_count, mdata_index=dtm.term_index)
+        dtm = dtm.map_partitions(reset_ind_count, axis="count", doc=True,
+                                 term=True, alt_doc="doc_count",
+                                 alt_term="term_count", doc_count=doc_count,
+                                 term_count=term_count,
+                                 doc_index=dtm.doc_index,
+                                 term_index=dtm.term_index)
+        dtm = dtm.map_partitions(reset_ind_mdata, axis="doc",
+                                 alt="mdata_count", mdata_count=doc_count,
+                                 mdata_index=dtm.doc_index)
+        dtm = dtm.map_partitions(reset_ind_mdata, axis="term",
+                                 alt="mdata_count", mdata_count=term_count,
+                                 mdata_index=dtm.term_index)
 
         return dtm
+
+
+    def add(self, new_dtm, **kwargs):
+        """sum two DTMs with same doc and terms
+
+        Parameters
+        ----------
+        new_dtm : DTM instance
+            another DTM which we assume has comparable dimensions/partitions
+            to the current one
+
+        Returns
+        -------
+        updated DTM
+        """
+
+        # all metadata must be the same between DTMs to add
+        if self.doc_df != new_dtm.doc_df:
+            raise ValueError("main and new DTM must share same doc_df")
+        elif self.term_df != new_dtm.term_df:
+            raise ValueError("main and new DTM must share same term_df")
+
+        kwargs["new_count"] = new_dtm.count_df
+        return self.map_partitions(add_part, alt="new_count", axis="count",
+                                   **kwargs)
 
 
     def merge(self, new_df, axis="doc", **kwargs):
@@ -676,31 +760,64 @@ class DTM(object):
             raise ValueError("new_df and %s must have same npartitions" % lab)
 
         kwargs["new_df"] = new_df
-        return self.map_axis(merge_part, alt="new_df", axis=axis, **kwargs)
+
+        dtm = self.map_partitions(merge_part, alt="new_df", axis=axis,
+                                  **kwargs)
+
+        return dtm
 
 
-    def add(self, new_dtm, **kwargs):
-        """sum two DTMs with same doc and terms
+    def sample(self, n=None, frac=None, axis="doc", full_sample=True,
+               **kwargs):
+        """sample from provided axis
 
         Parameters
         ----------
-        new_dtm : DTM instance
-            another DTM which we assume has comparable dimensions/partitions
-            to the current one
+        n : int, optional
+            Number of items from axis to return.  Cannot be used with frace.
+            Default = 1 if frac = None
+        frac : float, optional
+            Fraction of axis items to return.  Cannot be used with n
+        axis : str
+            label for axis which we wish to merge new_df
+        full_index : bool
+            whether to sample from each partition indvidually or as a whole
 
         Returns
         -------
         updated DTM
         """
 
-        # all metadata must be the same between DTMs to add
-        if self.doc_df != new_dtm.doc_df:
-            raise ValueError("main and new DTM must share same doc_df")
-        elif self.term_df != new_dtm.term_df:
-            raise ValueError("main and new DTM must share same term_df")
+        if axis == "doc":
+            comp_df = self.doc_df
+            lab = "doc_df"
+        elif axis == "term":
+            comp_df = self.term_df
+            lab = "term_df"
+        elif axis == "count":
+            comp_df = self.count_df
+            lab = "count_df"
 
-        kwargs["new_count"] = new_dtm.count_df
-        return self.map_axis(add_part, alt="new_count", axis="count", **kwargs)
+        # if we do full sample then we need to prep n for each partition
+        if full_sample:
+            if n and frac:
+                raise ValueError("n and frac can't both be provided")
+            elif n:
+                n = int(n / self.npartitions[0])
+            elif frac:
+                if frac < 0 or frac > 1:
+                    raise ValueError("frac must be between 0 and 1")
+                else:
+                    n = int(frac * len(comp_df))
+            kwds_l = [{"n": n} for i in range(comp_df.npartitions)]
+        else:
+            kwargs["n"] = n
+            kwargs["frac"] = frac
+
+        dtm = self.map_partitions(sample_part, axis=axis, kwds_l=kwds_l,
+                                  **kwargs)
+
+        return dtm
 
 
     def ttpartition(self, CV_partitions=None, out_dir=None,
@@ -733,7 +850,7 @@ class DTM(object):
             dtm = self
         else:
             dtm = self.copy()
-            dtm.repartition(CV_partitions)
+            dtm = dtm.repartition(CV_partitions)
 
         if out_dir_pattern is None:
             out_dir_pattern = "%s_CV%d"
@@ -760,7 +877,8 @@ class DTM(object):
                 train_dtm.doc_fpat = (train_dtm.doc_fpat[:part] +
                                       train_dtm.doc_fpat[(part+1):])
             train_dtm.npartitions = (Dp - 1, Vp)
-            train_dtm.reset_index(count=False, doc=False, term=False)
+            train_dtm = train_dtm.reset_index(count=False, doc=False,
+                                              term=False)
 
             # prep test_dtm
             test_dtm = dtm.copy()
@@ -769,7 +887,8 @@ class DTM(object):
             if test_dtm.doc_fpat is not None:
                 test_dtm.doc_fpat = test_dtm.doc_fpat[part:(part+1)]
             test_dtm.npartitions = (1, Vp)
-            test_dtm.reset_index(count=False, doc=False, term=False)
+            test_dtm = test_dtm.reset_index(count=False, doc=False,
+                                            term=False)
 
             # store output
             if out_dir:
@@ -781,8 +900,6 @@ class DTM(object):
 
                 os.makedirs(train_dir, exist_ok=True)
                 os.makedirs(test_dir, exist_ok=True)
-
-                print(train_dtm.doc_df.npartitions)
 
                 train_dtm.to_csv(out_dir=train_dir)
                 test_dtm.to_csv(out_dir=test_dir)

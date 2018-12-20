@@ -24,6 +24,7 @@ def int_doc(doc_df, count_df, doc_index):
     count_df = pd.concat(count_df)
     ind = count_df[doc_index].unique()
     doc_df = doc_df[doc_df[doc_index].isin(ind)]
+    doc_df = doc_df.reset_index(drop=True)
 
     return doc_df
 
@@ -47,6 +48,7 @@ def int_term(term_df, count_df, term_index):
 
     ind = count_df[term_index].unique().compute()
     term_df = term_df[term_df[term_index].isin(ind)]
+    term_df = term_df.reset_index(drop=True)
 
     return term_df
 
@@ -74,6 +76,7 @@ def int_count(count_df, doc_df, term_df, doc_index, term_index):
 
     count_df = count_df[count_df[doc_index].isin(doc_df[doc_index])]
     count_df = count_df[count_df[term_index].isin(term_df[term_index])]
+    count_df = count_df.reset_index(drop=True)
 
     return count_df
 
@@ -96,6 +99,7 @@ def reset_ind_mdata(mdata_df, mdata_count, mdata_index):
     mdata_count_val = mdata_count[0] - mdata_df.shape[0]
 
     mdata_ind_map = mdata_df[[mdata_index]]
+    mdata_ind_map = mdata_ind_map.reset_index(drop=True)
     mdata_ind_map["n_%s" % mdata_index] = (mdata_ind_map.index +
                                            mdata_count_val)
     mdata_ind_map.index = mdata_ind_map[mdata_index]
@@ -137,11 +141,13 @@ def reset_ind_count(count_df, doc_df, term_df, doc_count, term_count,
     term_count_val = term_count[0] - term_df.shape[0]
 
     doc_ind_map = doc_df[[doc_index]]
+    doc_ind_map = doc_ind_map.reset_index(drop=True)
     doc_ind_map["n_%s" % doc_index] = doc_ind_map.index + doc_count_val
     doc_ind_map.index = doc_ind_map[doc_index]
     doc_ind_map = doc_ind_map["n_%s" % doc_index]
 
     term_ind_map = term_df[[term_index]]
+    term_ind_map = term_ind_map.reset_index(drop=True)
     term_ind_map["n_%s" % term_index] = term_ind_map.index + term_count_val
     term_ind_map.index = term_ind_map[term_index]
     term_ind_map = term_ind_map["n_%s" % term_index]
@@ -198,3 +204,12 @@ def add_part(main_count, new_count, **kwargs):
     main_count = main_count.reset_index()
 
     return main_count_i
+
+
+def sample_part(df, **kwargs):
+    """wrapper function to sample from df"""
+
+    df = df.sample(**kwargs)
+    df = df.sort_index()
+
+    return df

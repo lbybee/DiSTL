@@ -179,30 +179,32 @@ class DTM(object):
         None
         """
 
+        dtm = self.persist()
+
         if out_dir:
             if doc_urlpath or term_urlpath or count_urlpath:
                 raise ValueError("If out_dir provided don't provide \
                                   urlpaths")
-            elif self.doc_fpat is not None and self.term_fpat is not None:
+            elif dtm.doc_fpat is not None and dtm.term_fpat is not None:
                 doc_urlpath = [os.path.join(out_dir,
                                                "doc_%s.csv" % f)
-                                  for f in self.doc_fpat]
+                                  for f in dtm.doc_fpat]
                 term_urlpath = [os.path.join(out_dir,
                                                 "term_%s.csv" % f)
-                                   for f in self.term_fpat]
+                                   for f in dtm.term_fpat]
                 count_urlpath = [os.path.join(out_dir,
                                                  "count_%s_%s.csv" %
                                                  (doc_f, term_f))
-                                    for term_f in self.term_fpat
-                                    for doc_f in self.doc_fpat]
+                                    for term_f in dtm.term_fpat
+                                    for doc_f in dtm.doc_fpat]
             else:
                 doc_urlpath = os.path.join(out_dir, "doc_*.csv")
                 term_urlpath = os.path.join(out_dir, "term_*.csv")
                 count_urlpath = os.path.join(out_dir, "count_*.csv")
 
-        self.doc_df.to_csv(doc_urlpath, index=False, **kwargs)
-        self.term_df.to_csv(term_urlpath, index=False, **kwargs)
-        self.count_df.to_csv(count_urlpath, index=False, **kwargs)
+        dtm.doc_df.to_csv(doc_urlpath, index=False, **kwargs)
+        dtm.term_df.to_csv(term_urlpath, index=False, **kwargs)
+        dtm.count_df.to_csv(count_urlpath, index=False, **kwargs)
 
 
     def repartition_doc(self, npartitions):
@@ -647,9 +649,9 @@ class DTM(object):
             return self.map_count(func, **kwargs)
 
 
-    def reset_index(self, doc=True, term=True, count=True):
-        """resets each index, this should be run after any series of
-        operations which may change the data in DTM
+    def intersect_index(self, doc=False, term=False, count=False):
+        """intersects the specified axes to populate any updates which might
+        drop observations
 
         Parameters
         ----------
@@ -665,23 +667,37 @@ class DTM(object):
         updated DTM
         """
 
+        dtm = self.copy()
+
+        # first subset dfs based on updates
+        if count:
+            dtm = dtm.map_partitions(intersect_count, axis="count", doc=True,
+                                     term=True, doc_index=dtm.doc_index,
+                                     term_index=dtm.term_index)
+        if doc:
+            dtm = dtm.map_partitions(intersect_doc, axis="doc", count=True,
+                                     doc_index=dtm.doc_index)
+        if term:
+            dtm = dtm.map_partitions(intersect_term, axis="term", count=True,
+                                     term_index=self.term_index)
+
+        return dtm
+
+
+    def reset_index(self):
+        """resets each index, this should be run after any series of
+        operations which may change the data in DTM where the index matters
+
+        Returns
+        -------
+        updated DTM
+        """
+
         # TODO currently we have to touch the metadata twice, ideally we
         # should only have to touch it once here, but that is going to require
         # that the we can map functions which return multiple values...
 
         dtm = self.copy()
-
-        # first subset dfs based on updates
-        if count:
-            dtm = dtm.map_partitions(int_count, axis="count", doc=True,
-                                     term=True, doc_index=dtm.doc_index,
-                                     term_index=dtm.term_index)
-        if doc:
-            dtm = dtm.map_partitions(int_doc, axis="doc", count=True,
-                                     doc_index=dtm.doc_index)
-        if term:
-            dtm = dtm.map_partitions(int_term, axis="term", count=True,
-                                     term_index=self.term_index)
 
         # now generate cumulative counts to share new df size between
         # partitions
@@ -817,6 +833,10 @@ class DTM(object):
         dtm = self.map_partitions(sample_part, axis=axis, kwds_l=kwds_l,
                                   **kwargs)
 
+        # NOTE we need to persist here because sample is stochastic, if we
+        # don't persist then future operations may get different results
+        dtm = dtm.persist()
+
         return dtm
 
 
@@ -877,8 +897,7 @@ class DTM(object):
                 train_dtm.doc_fpat = (train_dtm.doc_fpat[:part] +
                                       train_dtm.doc_fpat[(part+1):])
             train_dtm.npartitions = (Dp - 1, Vp)
-            train_dtm = train_dtm.reset_index(count=False, doc=False,
-                                              term=False)
+            train_dtm = train_dtm.reset_index()
 
             # prep test_dtm
             test_dtm = dtm.copy()
@@ -887,8 +906,7 @@ class DTM(object):
             if test_dtm.doc_fpat is not None:
                 test_dtm.doc_fpat = test_dtm.doc_fpat[part:(part+1)]
             test_dtm.npartitions = (1, Vp)
-            test_dtm = test_dtm.reset_index(count=False, doc=False,
-                                            term=False)
+            test_dtm = testm_dtm.reset_index()
 
             # store output
             if out_dir:

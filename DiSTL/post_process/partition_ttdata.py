@@ -76,7 +76,7 @@ def prep_covars(in_f_pattern, out_f_pattern, read_csv_kwds=None,
 
 
 def part_builder(tt_part_id, train_part, test_part, term_partitions,
-                 in_data_dir, out_data_dir, read_csv_kwds,
+                 in_dir, out_dir, read_csv_kwds,
                  rename_dict):
     """builds the training test files for each tt part
 
@@ -90,9 +90,9 @@ def part_builder(tt_part_id, train_part, test_part, term_partitions,
         list of test partitions (from doc_parititons)
     term_parttions : list
         list of term paritions
-    in_data_dir : str
+    in_dir : str
         input dir
-    out_data_dir : str
+    out_dir : str
         location of output files
     read_csv_kwds : dict
         key-words to pass to dd reader
@@ -109,36 +109,36 @@ def part_builder(tt_part_id, train_part, test_part, term_partitions,
     """
 
     # train counts
-    prep_counts([os.path.join(in_data_dir, "count_%s_%s.csv" % (d, n))
+    prep_counts([os.path.join(in_dir, "count_%s_%s.csv" % (d, n))
                  for d in train_part for n in term_partitions],
-                os.path.join(out_data_dir,
+                os.path.join(out_dir,
                              "%d_train_counts.csv" % tt_part_id))
 
     # test counts
-    prep_counts([os.path.join(in_data_dir, "count_%s_%s.csv" % (d, n))
+    prep_counts([os.path.join(in_dir, "count_%s_%s.csv" % (d, n))
                  for d in test_part for n in term_partitions],
-                os.path.join(out_data_dir,
+                os.path.join(out_dir,
                              "%d_test_counts.csv" % tt_part_id))
 
     # train covars
-    prep_covars([os.path.join(in_data_dir, "doc_id_%s.csv" % d)
+    prep_covars([os.path.join(in_dir, "doc_id_%s.csv" % d)
                  for d in train_part],
-                os.path.join(out_data_dir,
+                os.path.join(out_dir,
                              "%d_train_covars.csv" % tt_part_id),
                 read_csv_kwds=read_csv_kwds,
                 rename_dict=rename_dict)
 
     # test covars
-    prep_covars([os.path.join(in_data_dir, "doc_id_%s.csv" % d)
+    prep_covars([os.path.join(in_dir, "doc_id_%s.csv" % d)
                  for d in test_part],
-                os.path.join(out_data_dir,
+                os.path.join(out_dir,
                              "%d_test_covars.csv" % tt_part_id),
                 read_csv_kwds=read_csv_kwds,
                 rename_dict=rename_dict)
 
 
-def gen_multi_tt_part(doc_partitions, term_partitions, in_data_dir,
-                      out_data_dir, rename_dict, read_csv_kwds,
+def gen_multi_tt_part(doc_partitions, term_partitions, in_dir,
+                      out_dir, rename_dict, read_csv_kwds,
                       tt_part_count):
     """generates a series of training/test partitions from the DTM based
     on the tt_part_count
@@ -149,9 +149,9 @@ def gen_multi_tt_part(doc_partitions, term_partitions, in_data_dir,
         list of doc parts
     term_partitions : list
         list of term parts
-    in_data_dir : str
+    in_dir : str
         location of input files
-    out_data_dir : str
+    out_dir : str
         location of output files
     rename_dict : dict
         dictionary mapping current columsn to new columns, the values are
@@ -186,12 +186,12 @@ def gen_multi_tt_part(doc_partitions, term_partitions, in_data_dir,
     # build partitions
     for k, part in enumerate(zip(train_partitions, test_partitions)):
         train_part, test_part = part
-        part_builder(k, train_part, test_part, term_partitions, in_data_dir,
-                     out_data_dir, read_csv_kwds, rename_dict)
+        part_builder(k, train_part, test_part, term_partitions, in_dir,
+                     out_dir, read_csv_kwds, rename_dict)
 
 
-def gen_single_tt_part(doc_partitions, term_partitions, in_data_dir,
-                       out_data_dir, rename_dict, read_csv_kwds,
+def gen_single_tt_part(doc_partitions, term_partitions, in_dir,
+                       out_dir, rename_dict, read_csv_kwds,
                        tt_test_part_prop, tt_part_loc):
     """generates a single training/test partition from the DTM based on
     the tt_part_prop and tt_part_loc
@@ -202,9 +202,9 @@ def gen_single_tt_part(doc_partitions, term_partitions, in_data_dir,
         list of doc parts
     term_partitions : list
         list of term parts
-    in_data_dir : str
+    in_dir : str
         location of input files
-    out_data_dir : str
+    out_dir : str
         location of output files
     rename_dict : dict
         dictionary mapping current columsn to new columns, the values are
@@ -251,11 +251,11 @@ def gen_single_tt_part(doc_partitions, term_partitions, in_data_dir,
         raise ValueError("tt_part_loc: %s unsupported")
 
     part_builder(0, train_partitions, test_partitions, term_partitions,
-                 in_data_dir, out_data_dir, read_csv_kwds, rename_dict)
+                 in_dir, out_dir, read_csv_kwds, rename_dict)
 
 
-def tt_part_wrapper(doc_partitions, term_partitions, in_data_dir,
-                    out_data_dir, rename_dict, read_csv_kwds, tt_part_count,
+def tt_part_wrapper(doc_partitions, term_partitions, in_dir,
+                    out_dir, rename_dict, read_csv_kwds, tt_part_count,
                     tt_test_part_prop=None, tt_part_loc=None, **kwds):
     """wrapper to split the data into a series of training and test
     partitions
@@ -266,9 +266,9 @@ def tt_part_wrapper(doc_partitions, term_partitions, in_data_dir,
         list of doc parts
     term_partitions : list
         list of term parts
-    in_data_dir : str
+    in_dir : str
         location of input files
-    out_data_dir : str
+    out_dir : str
         location of output files
     rename_dict : dict
         dictionary mapping current columsn to new columns, the values are
@@ -288,8 +288,8 @@ def tt_part_wrapper(doc_partitions, term_partitions, in_data_dir,
     """
 
     if tt_part_count > 1:
-        gen_multi_tt_part(doc_partitions, term_partitions, in_data_dir,
-                          out_data_dir, rename_dict, read_csv_kwds,
+        gen_multi_tt_part(doc_partitions, term_partitions, in_dir,
+                          out_dir, rename_dict, read_csv_kwds,
                           tt_part_count)
 
     elif tt_part_count == 1:
@@ -297,8 +297,8 @@ def tt_part_wrapper(doc_partitions, term_partitions, in_data_dir,
             raise ValueError("tt_test_part_prop and tt_part_loc can't be " +
                              "None if tt_part_count == 1")
         else:
-            gen_single_tt_part(doc_partitions, term_partitions, in_data_dir,
-                               out_data_dir, rename_dict, read_csv_kwds,
+            gen_single_tt_part(doc_partitions, term_partitions, in_dir,
+                               out_dir, rename_dict, read_csv_kwds,
                                tt_test_part_prop, tt_part_loc)
 
     else:

@@ -4,16 +4,16 @@ import pandas as pd
 import os
 
 
-def update_doc_partition(in_data_dir, out_data_dir, doc_part,
+def update_doc_partition(in_dir, out_dir, doc_part,
                          term_partitions, update_method,
                          update_method_kwds, term_id_l=None):
     """updates each partition with the provided methods
 
     Parameters
     ----------
-    in_data_dir : str
+    in_dir : str
         location where input DTM files are located
-    out_data_dir : str
+    out_dir : str
         location where output DTM file will be written
     doc_part : str
         label for current partition
@@ -39,10 +39,10 @@ def update_doc_partition(in_data_dir, out_data_dir, doc_part,
     """
 
     # load partition data
-    doc_f = os.path.join(in_data_dir, "doc_id_%s.csv" % doc_part)
+    doc_f = os.path.join(in_dir, "doc_id_%s.csv" % doc_part)
     doc_id = pd.read_csv(doc_f)
 
-    count_f_l = [os.path.join(in_data_dir, "count_%s_%s.csv" % (doc_part,
+    count_f_l = [os.path.join(in_dir, "count_%s_%s.csv" % (doc_part,
                                                                 term_part))
                  for term_part in term_partitions]
     counts = [pd.read_csv(count_f) for count_f in count_f_l]
@@ -56,17 +56,17 @@ def update_doc_partition(in_data_dir, out_data_dir, doc_part,
     doc_id, counts = update_method(**update_method_kwds)
 
     # write output
-    doc_f = os.path.join(out_data_dir, "doc_id_%s.csv" % doc_part)
+    doc_f = os.path.join(out_dir, "doc_id_%s.csv" % doc_part)
     doc_id.to_csv(doc_f, index=False)
 
-    count_f_l = [os.path.join(out_data_dir, "count_%s_%s.csv" % (doc_part,
+    count_f_l = [os.path.join(out_dir, "count_%s_%s.csv" % (doc_part,
                                                                  term_part))
                  for term_part in term_partitions]
     [count_p.to_csv(count_f, index=False) for count_p, count_f
      in zip(counts, count_f_l)]
 
 
-def update_doc_core(in_data_dir, out_data_dir, n_jobs, doc_partitions,
+def update_doc_core(in_dir, out_dir, n_jobs, doc_partitions,
                     term_partitions, update_method, update_method_kwds=None,
                     term_id_depend=False, **kwds):
     """applies the provided update method to the partitions along the doc
@@ -74,9 +74,9 @@ def update_doc_core(in_data_dir, out_data_dir, n_jobs, doc_partitions,
 
     Parameters
     ----------
-    in_data_dir : str
+    in_dir : str
         location where input DTM files are located
-    out_data_dir : str
+    out_dir : str
         location where output DTM file will be written
     n_jobs : int
         number of jobs for multiprocessing
@@ -115,7 +115,7 @@ def update_doc_core(in_data_dir, out_data_dir, n_jobs, doc_partitions,
         update_method_kwds = {}
 
     if term_id_depend:
-        term_f_l = [os.path.join(in_data_dir, "term_id_%s.csv" % term_part)
+        term_f_l = [os.path.join(in_dir, "term_id_%s.csv" % term_part)
                     for term_part in term_partitions]
         term_id_l = [pd.read_csv(term_f) for term_f in term_f_l]
     else:
@@ -124,12 +124,12 @@ def update_doc_core(in_data_dir, out_data_dir, n_jobs, doc_partitions,
     # update each doc part
     Parallel(n_jobs=n_jobs)(
         delayed(update_doc_partition)(
-            in_data_dir, out_data_dir, doc_part, term_partitions,
+            in_dir, out_dir, doc_part, term_partitions,
             update_method, update_method_kwds, term_id_l)
         for doc_part in doc_partitions)
 
     # copy term partition files
     Parallel(n_jobs=n_jobs)(
         delayed(_copy_id)(
-            "term_id_%s.csv" % term_part, in_data_dir, out_data_dir)
+            "term_id_%s.csv" % term_part, in_dir, out_dir)
         for term_part in term_partitions)

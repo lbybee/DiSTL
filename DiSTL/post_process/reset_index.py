@@ -31,7 +31,7 @@ def _map_count(count, term_id_map, doc_id_map):
     return count
 
 
-def _load_term_id_map(term_partitions, in_data_dir, out_data_dir,
+def _load_term_id_map(term_partitions, in_dir, out_dir,
                       u_term_id):
     """loads the term ids from input dict and returns the term_id_map
 
@@ -39,9 +39,9 @@ def _load_term_id_map(term_partitions, in_data_dir, out_data_dir,
     ----------
     term_partitions : list
         list of term partitions
-    in_data_dir : str
+    in_dir : str
         location of input files
-    out_data_dir : str
+    out_dir : str
         location of output files
     u_term_id : pd series
         series of unique term ids which still have counts
@@ -59,7 +59,7 @@ def _load_term_id_map(term_partitions, in_data_dir, out_data_dir,
     term_map_dict = {}
 
     for term_part in term_partitions:
-        term_f = os.path.join(in_data_dir, "term_id_%s.csv" % term_part)
+        term_f = os.path.join(in_dir, "term_id_%s.csv" % term_part)
         term_id = pd.read_csv(term_f)
 
         # constrain to count term_ids
@@ -74,7 +74,7 @@ def _load_term_id_map(term_partitions, in_data_dir, out_data_dir,
 
         # apply map
         term_id["term_id"] = term_id["term_id"].map(term_id_map)
-        term_f = os.path.join(out_data_dir, "term_id_%s.csv" % term_part)
+        term_f = os.path.join(out_dir, "term_id_%s.csv" % term_part)
         term_id.to_csv(term_f, index=False)
         term_map_dict[term_part] = term_id_map
         term_id_offset += len(term_id)
@@ -82,14 +82,14 @@ def _load_term_id_map(term_partitions, in_data_dir, out_data_dir,
     return term_map_dict
 
 
-def _gen_doc_id_length(doc_part, in_data_dir, tmp_length_file, u_doc_id):
+def _gen_doc_id_length(doc_part, in_dir, tmp_length_file, u_doc_id):
     """generates the length of each doc id and writes to a temporary file
 
     Parameters
     ----------
     doc_part : str
         label for doc partition
-    in_data_dir : str
+    in_dir : str
         location of input files
     tmp_length_file : str
         location where temporary length file is tored
@@ -101,7 +101,7 @@ def _gen_doc_id_length(doc_part, in_data_dir, tmp_length_file, u_doc_id):
     None
     """
 
-    doc_f = os.path.join(in_data_dir, "doc_id_%s.csv" % doc_part)
+    doc_f = os.path.join(in_dir, "doc_id_%s.csv" % doc_part)
     doc_id = pd.read_csv(doc_f)
 
     # constrain to count doc_ids
@@ -114,7 +114,7 @@ def _gen_doc_id_length(doc_part, in_data_dir, tmp_length_file, u_doc_id):
 
 
 def _reset_doc_part(doc_part, doc_partitions, term_partitions,
-                    count_partitions, in_data_dir, out_data_dir,
+                    count_partitions, in_dir, out_dir,
                     tmp_length_file, u_doc_id, term_id_map):
     """resets the doc_id for the specified partition and maps the
     new doc_ids to the counts (so reset the indices for an entire doc_part
@@ -129,9 +129,9 @@ def _reset_doc_part(doc_part, doc_partitions, term_partitions,
         list of term parts
     count_partitions : list
         list of count partitions
-    in_data_dir : str
+    in_dir : str
         location of input files
-    out_data_dir : str
+    out_dir : str
         location of output files
     tmp_length_file : str
         location where temporary length file is tored
@@ -158,7 +158,7 @@ def _reset_doc_part(doc_part, doc_partitions, term_partitions,
     doc_id_offset = agg_length["length"].sum()
 
     # process doc_id
-    doc_f = os.path.join(in_data_dir, "doc_id_%s.csv" % doc_part)
+    doc_f = os.path.join(in_dir, "doc_id_%s.csv" % doc_part)
     doc_id = pd.read_csv(doc_f)
     # constrain to count doc_ids
     doc_id = doc_id[doc_id["doc_id"].isin(u_doc_id)]
@@ -169,32 +169,32 @@ def _reset_doc_part(doc_part, doc_partitions, term_partitions,
     doc_id_map.index = doc_id_map["doc_id"]
     doc_id_map = doc_id_map["new_doc_id"]
     doc_id["doc_id"] = doc_id["doc_id"].map(doc_id_map)
-    doc_f = os.path.join(out_data_dir, "doc_id_%s.csv" % doc_part)
+    doc_f = os.path.join(out_dir, "doc_id_%s.csv" % doc_part)
     doc_id.to_csv(doc_f, index=False)
 
     # process counts
     for term_part in term_partitions:
         if len(count_partitions) > 0:
             for count_part in count_partitions:
-                count_f = os.path.join(in_data_dir, "count_%s_%s_%s.csv" %
+                count_f = os.path.join(in_dir, "count_%s_%s_%s.csv" %
                                        (doc_part, term_part, count_part))
                 count = pd.read_csv(count_f)
                 count = _map_count(count, term_id_map[term_part], doc_id_map)
-                count_f = os.path.join(out_data_dir, "count_%s_%s_%s.csv" %
+                count_f = os.path.join(out_dir, "count_%s_%s_%s.csv" %
                                        (doc_part, term_part, count_part))
                 count.to_csv(count_f, index=False)
         else:
-            count_f = os.path.join(in_data_dir, "count_%s_%s.csv" %
+            count_f = os.path.join(in_dir, "count_%s_%s.csv" %
                                    (doc_part, term_part))
             count = pd.read_csv(count_f)
             count = _map_count(count, term_id_map[term_part], doc_id_map)
-            count_f = os.path.join(out_data_dir, "count_%s_%s.csv" %
+            count_f = os.path.join(out_dir, "count_%s_%s.csv" %
                                    (doc_part, term_part))
             count.to_csv(count_f, index=False)
 
 
 def reset_index_wrapper(doc_partitions, term_partitions, tmp_length_file,
-                        n_jobs, in_data_dir, out_data_dir,
+                        n_jobs, in_dir, out_dir,
                         count_partitions=None, **kwds):
     """reset the indices of a DTM that may have been manipulated by other
     operations
@@ -210,9 +210,9 @@ def reset_index_wrapper(doc_partitions, term_partitions, tmp_length_file,
         parts
     n_jobs : int
         number of jobs for multiprocessing
-    in_data_dir : str
+    in_dir : str
         location where input files are stored
-    out_data_dir : str
+    out_dir : str
         location where output files will be stored
     count_partitions : list or None
         list of partition labels for different count types (e.g. headline,
@@ -234,7 +234,7 @@ def reset_index_wrapper(doc_partitions, term_partitions, tmp_length_file,
 
     # prep lists of remaining doc_ids and term_ids (this is because some
     # counts may have dropped eliminating certain docs/terms
-    counts = dd.read_csv(os.path.join(in_data_dir, "count_*.csv"),
+    counts = dd.read_csv(os.path.join(in_dir, "count_*.csv"),
                          blocksize=None)
     u_doc_id = counts["doc_id"].drop_duplicates().compute()
     u_term_id = counts["term_id"].drop_duplicates().compute()
@@ -245,17 +245,17 @@ def reset_index_wrapper(doc_partitions, term_partitions, tmp_length_file,
     # get id lengths for doc_ids
     Parallel(n_jobs=n_jobs)(
         delayed(_gen_doc_id_length)(
-            doc_part, in_data_dir, tmp_length_file, u_doc_id)
+            doc_part, in_dir, tmp_length_file, u_doc_id)
         for doc_part in doc_partitions)
 
     # load term id map and reset term ids
-    term_id_map = _load_term_id_map(term_partitions, in_data_dir,
-                                    out_data_dir, u_term_id)
+    term_id_map = _load_term_id_map(term_partitions, in_dir,
+                                    out_dir, u_term_id)
 
     # reset doc ids and apply new doc/term ids to counts
     Parallel(n_jobs=n_jobs)(
         delayed(_reset_doc_part)(
             doc_part, doc_partitions, term_partitions, count_partitions,
-            in_data_dir, out_data_dir, tmp_length_file, u_doc_id,
+            in_dir, out_dir, tmp_length_file, u_doc_id,
             term_id_map)
         for doc_part in doc_partitions)

@@ -4,7 +4,7 @@ import dask.dataframe as dd
 import os
 
 
-def _sum_counts(doc_part, term_part, in_data_dir, out_data_dir):
+def _sum_counts(doc_part, term_part, in_dir, out_dir):
     """take multiple count partitions and sum into one count file
 
     Parameters
@@ -13,9 +13,9 @@ def _sum_counts(doc_part, term_part, in_data_dir, out_data_dir):
         label for current doc_part
     term_part : str
         label for current term part
-    in_data_dir : str
+    in_dir : str
         location of input files
-    out_data_dir : str
+    out_dir : str
         location of output files
 
     Returns
@@ -27,19 +27,19 @@ def _sum_counts(doc_part, term_part, in_data_dir, out_data_dir):
     updated count file
     """
 
-    count_f = os.path.join(in_data_dir, "count_%s_%s_*.csv" % (doc_part,
+    count_f = os.path.join(in_dir, "count_%s_%s_*.csv" % (doc_part,
                                                                term_part))
     count = dd.read_csv(count_f)
     count = count.groupby(["doc_id", "term_id"])["count"].sum().compute()
     count = count.reset_index()
 
-    count_f = os.path.join(out_data_dir, "count_%s_%s.csv" % (doc_part,
+    count_f = os.path.join(out_dir, "count_%s_%s.csv" % (doc_part,
                                                               term_part))
     count.to_csv(count_f, index=False)
 
 
 def collapse_wrapper(doc_partitions, term_partitions, count_partitions,
-                     n_jobs, in_data_dir, out_data_dir, **kwds):
+                     n_jobs, in_dir, out_dir, **kwds):
     """aggregate a DTM over the count partitions
 
     Parameters
@@ -53,9 +53,9 @@ def collapse_wrapper(doc_partitions, term_partitions, count_partitions,
         body)
     n_jobs : int
         number of jobs for multiprocessing
-    in_data_dir : str
+    in_dir : str
         location where input files are stored
-    out_data_dir : str
+    out_dir : str
         location where output files will be stored
 
     Returns
@@ -77,16 +77,16 @@ def collapse_wrapper(doc_partitions, term_partitions, count_partitions,
     # the count_partitions
     Parallel(n_jobs=n_jobs)(
         delayed(_sum_counts)(
-            doc_part, term_part, in_data_dir, out_data_dir)
+            doc_part, term_part, in_dir, out_dir)
         for doc_part in doc_partitions
         for term_part in term_partitions)
 
     # copy doc_ids and term_ids
     Parallel(n_jobs=n_jobs)(
         delayed(_copy_id)(
-            "doc_id_%s.csv" % doc_part, in_data_dir, out_data_dir)
+            "doc_id_%s.csv" % doc_part, in_dir, out_dir)
         for doc_part in doc_partitions)
     Parallel(n_jobs=n_jobs)(
         delayed(_copy_id)(
-            "term_id_%s.csv" % term_part, in_data_dir, out_data_dir)
+            "term_id_%s.csv" % term_part, in_dir, out_dir)
         for term_part in term_partitions)

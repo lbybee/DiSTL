@@ -5,7 +5,7 @@ import dask
 import os
 
 
-def update_term_partition(in_data_dir, out_data_dir, term_part,
+def update_term_partition(in_dir, out_dir, term_part,
                           doc_partitions, update_method,
                           update_method_kwds,
                           doc_id_dd=None, count_depend=False):
@@ -13,9 +13,9 @@ def update_term_partition(in_data_dir, out_data_dir, term_part,
 
     Parameters
     ----------
-    in_data_dir : str
+    in_dir : str
         location where input DTM files are located
-    out_data_dir : str
+    out_dir : str
         location where output DTM file will be written
     term_part : str
         label for current partition
@@ -43,10 +43,10 @@ def update_term_partition(in_data_dir, out_data_dir, term_part,
     """
 
     # load partition data
-    term_f = os.path.join(in_data_dir, "term_id_%s.csv" % term_part)
+    term_f = os.path.join(in_dir, "term_id_%s.csv" % term_part)
     term_id = pd.read_csv(term_f)
 
-    count_f_l = [os.path.join(in_data_dir, "count_%s_%s.csv" % (doc_part,
+    count_f_l = [os.path.join(in_dir, "count_%s_%s.csv" % (doc_part,
                                                                 term_part))
                  for doc_part in doc_partitions]
     counts = dd.read_csv(count_f_l, blocksize=None)
@@ -60,16 +60,16 @@ def update_term_partition(in_data_dir, out_data_dir, term_part,
     term_id, counts = update_method(**update_method_kwds)
 
     # write output
-    term_f = os.path.join(out_data_dir, "term_id_%s.csv" % term_part)
+    term_f = os.path.join(out_dir, "term_id_%s.csv" % term_part)
     term_id.to_csv(term_f, index=False)
 
-    count_f_l = [os.path.join(out_data_dir, "count_%s_%s.csv" % (doc_part,
+    count_f_l = [os.path.join(out_dir, "count_%s_%s.csv" % (doc_part,
                                                                  term_part))
                  for doc_part in doc_partitions]
     counts.to_csv(count_f_l, index=False)
 
 
-def update_term_core(in_data_dir, out_data_dir, doc_partitions,
+def update_term_core(in_dir, out_dir, doc_partitions,
                      term_partitions, update_method, update_method_kwds=None,
                      doc_id_depend=False, **kwds):
     """applies the provided update method to the partitions along the term
@@ -77,9 +77,9 @@ def update_term_core(in_data_dir, out_data_dir, doc_partitions,
 
     Parameters
     ----------
-    in_data_dir : str
+    in_dir : str
         location where input DTM files are located
-    out_data_dir : str
+    out_dir : str
         location where output DTM file will be written
     doc_partitions : list
         list of partitions over doc axis (e.g. date)
@@ -116,16 +116,16 @@ def update_term_core(in_data_dir, out_data_dir, doc_partitions,
         update_method_kwds = {}
 
     if doc_id_depend:
-        doc_id_dd = dd.read_csv(os.path.join(in_data_dir, "doc_id_*.csv"),
+        doc_id_dd = dd.read_csv(os.path.join(in_dir, "doc_id_*.csv"),
                                 blocksize=None, assume_missing=True)
         doc_id_dd = dask.persist(doc_id_dd)[0]
     else:
         doc_id_dd = None
 
     for term_part in term_partitions:
-        update_term_partition(in_data_dir, out_data_dir, term_part,
+        update_term_partition(in_dir, out_dir, term_part,
                               doc_partitions, update_method,
                               update_method_kwds, doc_id_dd)
 
     for doc_part in doc_partitions:
-        _copy_id("doc_id_%s.csv" % doc_part, in_data_dir, out_data_dir)
+        _copy_id("doc_id_%s.csv" % doc_part, in_dir, out_dir)

@@ -28,15 +28,15 @@ def doc_method(doc_id, counts, doc_part, sample_size, **kwds):
     return doc_id, counts
 
 
-def sample_doc_wrapper(in_data_dir, out_data_dir, n_jobs, doc_partitions,
+def sample_doc_wrapper(in_dir, out_dir, n_jobs, doc_partitions,
                        term_partitions, sample_size, **kwds):
     """wrapper around update_core to sample documents
 
     Parameters
     ----------
-    in_data_dir : str
+    in_dir : str
         location where input DTM files are located
-    out_data_dir : str
+    out_dir : str
         location where output DTM file will be written
     n_jobs : int
         number of jobs for multiprocessing
@@ -58,6 +58,6 @@ def sample_doc_wrapper(in_data_dir, out_data_dir, n_jobs, doc_partitions,
 
     update_method_kwds = {"sample_size": sample_size}
 
-    return update_doc_core(in_data_dir, out_data_dir, n_jobs,
+    return update_doc_core(in_dir, out_dir, n_jobs,
                            doc_partitions, term_partitions, doc_method,
                            update_method_kwds)

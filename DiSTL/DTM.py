@@ -55,6 +55,11 @@ def _prep_fnames(doc_globstring, term_globstring):
                  difflib.ndiff(term_globstring, f) if "+" in r])
                  for f in term_flist]
 
+    if len(doc_fpat) == 1:
+        doc_fpat = None
+    if len(term_fpat) == 1:
+        term_fpat = None
+
     return doc_fpat, term_fpat
 
 
@@ -173,34 +178,34 @@ class DTM(object):
             urlpath for term_df
         count_urlpath : str or None
             urlpath for count_df
-
-        Returns
-        -------
-        None
         """
 
         dtm = self.persist()
 
-        if out_dir:
-            if doc_urlpath or term_urlpath or count_urlpath:
-                raise ValueError("If out_dir provided don't provide \
-                                  urlpaths")
-            elif dtm.doc_fpat is not None and dtm.term_fpat is not None:
-                doc_urlpath = [os.path.join(out_dir,
-                                               "doc_%s.csv" % f)
-                                  for f in dtm.doc_fpat]
-                term_urlpath = [os.path.join(out_dir,
-                                                "term_%s.csv" % f)
-                                   for f in dtm.term_fpat]
-                count_urlpath = [os.path.join(out_dir,
-                                                 "count_%s_%s.csv" %
-                                                 (doc_f, term_f))
-                                    for term_f in dtm.term_fpat
-                                    for doc_f in dtm.doc_fpat]
-            else:
-                doc_urlpath = os.path.join(out_dir, "doc_*.csv")
-                term_urlpath = os.path.join(out_dir, "term_*.csv")
-                count_urlpath = os.path.join(out_dir, "count_*.csv")
+        if not out_dir:
+            out_dir = "."
+        if dtm.doc_fpat:
+            doc_fpat = dtm.doc_fpat
+        else:
+            doc_fpat = [("%d" % d).zfill(2) for d in
+                        range(dtm.npartitions[0])]
+        if term.doc_fpat:
+            term_fpat = dtm.term_fpat
+        else:
+            term_fpat = [("%d" % d).zfill(2) for d in
+                         range(dtm.npartitions[1])]
+
+        if not doc_urlpath:
+            doc_urlpath = [os.path.join(out_dir, "doc_%s.csv" % f)
+                           for f in doc_fpat]
+        if not term_urlpath
+            term_urlpath = [os.path.join(out_dir, "term_%s.csv" % f)
+                            for f in term_fpat]
+        if not count_urlpath:
+            count_urlpath = [os.path.join(out_dir, "count_%s_%s.csv" %
+                                          (d_f, t_f))
+                             for d_f in dtm.doc_fpat
+                             for t_f in dtm.term_fpat]
 
         dtm.doc_df.to_csv(doc_urlpath, index=False, **kwargs)
         dtm.term_df.to_csv(term_urlpath, index=False, **kwargs)
@@ -339,8 +344,11 @@ class DTM(object):
         dtm.count_df = dd.from_delayed(count_del_l)
 
         # now reset fpatterns if provided
-        if dtm.term_fpat is not None:
-            dtm.term_fpat = [dtm.term_fpat[0] + "_T_" + dtm.term_fpat[1]]
+#        if dtm.term_fpat is not None:
+#            dtm.term_fpat = [dtm.term_fpat[0] + "_T_" + dtm.term_fpat[1]]
+        # since we've collapsed to term counts we shouldn't have a pattern
+        # any longer
+        dtm.term_fpat = None
 
         # finally reset npartitions
         dtm.npartitions = (dtm.doc_df.npartitions,
@@ -930,7 +938,8 @@ class DTM(object):
 
 
 def read_csv(in_dir=None, doc_globstring=None, term_globstring=None,
-             count_globstring=None, doc_index="doc_id", term_index="term_id",
+             count_globstring=None, doc_flist=None, term_flist=None,
+             count_flist=None, doc_index="doc_id", term_index="term_id",
              keep_fname=True, blocksize=None, **kwargs):
     """reads the csvs for each partition and populates DTM
 
@@ -945,6 +954,12 @@ def read_csv(in_dir=None, doc_globstring=None, term_globstring=None,
         globstring for term_df files
     count_globstring : str or None
         globstring for count files
+    doc_flist : list or None
+        list for doc_df files
+    term_list : list or None
+        list for term_df files
+    count_list : list or None
+        list for count files
     doc_index : str
         label for doc axis index
     term_index : str
@@ -961,20 +976,22 @@ def read_csv(in_dir=None, doc_globstring=None, term_globstring=None,
     populated DTM object
     """
 
-    # TODO add support for file lists
-
-    if in_dir:
-        if doc_globstring or term_globstring or count_globstring:
-            raise ValueError("If in_dir provided don't provide \
-                              globstrings")
-        else:
+    if not in_dir:
+        in_dir = "."
+    if not doc_flist:
+        if not doc_globstring:
             doc_globstring = os.path.join(in_dir, "doc_*.csv")
+        doc_flist = glob.glob(doc_globstring)
+    if not term_flist:
+        if not term_globstring
             term_globstring = os.path.join(in_dir, "term_*.csv")
+        term_flist = glob.glob(term_globstring)
+    if not count_flist:
+        if not count_globstring:
             count_globstring = os.path.join(in_dir, "count_*.csv")
-
+        count_flist = glob.glob(count_globstring)
 
     # load doc id info
-    doc_flist = glob.glob(doc_globstring)
     doc_flist.sort()
     if len(doc_flist) == 1:
         doc_df = dd.from_pandas(pd.read_csv(doc_flist[0], **kwargs),
@@ -983,7 +1000,6 @@ def read_csv(in_dir=None, doc_globstring=None, term_globstring=None,
         doc_df = dd.read_csv(doc_flist, blocksize=blocksize, **kwargs)
 
     # load term id info
-    term_flist = glob.glob(term_globstring)
     term_flist.sort()
     if len(term_flist) == 1:
         term_df = dd.from_pandas(pd.read_csv(term_flist[0], **kwargs),
@@ -992,7 +1008,6 @@ def read_csv(in_dir=None, doc_globstring=None, term_globstring=None,
         term_df = dd.read_csv(term_flist, blocksize=blocksize, **kwargs)
 
     # load counts
-    count_flist = glob.glob(count_globstring)
     count_flist.sort()
     if len(count_flist) == 1:
         count_df = dd.from_pandas(pd.read_csv(count_flist[0], **kwargs),
@@ -1000,6 +1015,7 @@ def read_csv(in_dir=None, doc_globstring=None, term_globstring=None,
     else:
         count_df = dd.read_csv(count_flist, blocksize=blocksize, **kwargs)
 
+    # prep doc/term fpatterns
     if keep_fname:
         doc_fpat, term_fpat = _prep_fnames(doc_globstring, term_globstring)
     else:

@@ -189,7 +189,7 @@ class DTM(object):
         else:
             doc_fpat = [("%d" % d).zfill(2) for d in
                         range(dtm.npartitions[0])]
-        if term.doc_fpat:
+        if dtm.term_fpat:
             term_fpat = dtm.term_fpat
         else:
             term_fpat = [("%d" % d).zfill(2) for d in
@@ -198,14 +198,14 @@ class DTM(object):
         if not doc_urlpath:
             doc_urlpath = [os.path.join(out_dir, "doc_%s.csv" % f)
                            for f in doc_fpat]
-        if not term_urlpath
+        if not term_urlpath:
             term_urlpath = [os.path.join(out_dir, "term_%s.csv" % f)
                             for f in term_fpat]
         if not count_urlpath:
             count_urlpath = [os.path.join(out_dir, "count_%s_%s.csv" %
                                           (d_f, t_f))
-                             for d_f in dtm.doc_fpat
-                             for t_f in dtm.term_fpat]
+                             for d_f in doc_fpat
+                             for t_f in term_fpat]
 
         dtm.doc_df.to_csv(doc_urlpath, index=False, **kwargs)
         dtm.term_df.to_csv(term_urlpath, index=False, **kwargs)
@@ -983,7 +983,7 @@ def read_csv(in_dir=None, doc_globstring=None, term_globstring=None,
             doc_globstring = os.path.join(in_dir, "doc_*.csv")
         doc_flist = glob.glob(doc_globstring)
     if not term_flist:
-        if not term_globstring
+        if not term_globstring:
             term_globstring = os.path.join(in_dir, "term_*.csv")
         term_flist = glob.glob(term_globstring)
     if not count_flist:

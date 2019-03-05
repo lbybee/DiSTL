@@ -8,7 +8,7 @@ import logging
 import os
 
 
-def term_query(term_part, db_kwds, schema, out_data_dir, term_columns,
+def term_query(term_part, db_kwds, schema, out_dir, term_columns,
                gen_term_sql, gen_term_sql_kwds, logger=None):
     """generates a table containing the term_label and term_id for the
     ngrams kept after applying any rules to constrain sql
@@ -25,7 +25,7 @@ def term_query(term_part, db_kwds, schema, out_data_dir, term_columns,
         key-words to pass to psycopg2 connection
     schema : str
         schema name
-    out_data_dir : str
+    out_dir : str
         location where output files are stored
     term_columns : list
         list of columns for term id files
@@ -61,7 +61,7 @@ def term_query(term_part, db_kwds, schema, out_data_dir, term_columns,
     copy_sql = "(SELECT term_label, new_term_id FROM tmp_term_%s)" % term_part
 
     # now dump table to csv
-    with open(os.path.join(out_data_dir, "term_id_%s.csv" % term_part),
+    with open(os.path.join(out_dir, "term_id_%s.csv" % term_part),
               "w") as fd:
         fd.write(",".join(term_columns) + "\n")
         cursor.copy_to(fd, copy_sql, sep=",")
@@ -105,7 +105,7 @@ def drop_temp_term_table(term_part, db_kwds, schema):
 
 
 
-def doc_count_query(doc_part, db_kwds, schema, out_data_dir,
+def doc_count_query(doc_part, db_kwds, schema, out_dir,
                     term_partitions, count_partitions, doc_columns,
                     count_columns, gen_full_doc_sql, gen_count_sql,
                     gen_full_doc_sql_kwds, logger=None):
@@ -120,7 +120,7 @@ def doc_count_query(doc_part, db_kwds, schema, out_data_dir,
         key-words to pass to pscopyg2 connection
     schema : str
         name of schema
-    out_data_dir : str
+    out_dir : str
         location where output files are stored
     term_partitions  : list
         list of term partitions (e.g. 1gram, 2gram,...)
@@ -159,7 +159,7 @@ def doc_count_query(doc_part, db_kwds, schema, out_data_dir,
     doc_sql, doc_id_sql = gen_full_doc_sql(doc_part, **gen_full_doc_sql_kwds)
 
     # write doc id
-    with open(os.path.join(out_data_dir, "doc_id_%s.csv" % doc_part),
+    with open(os.path.join(out_dir, "doc_id_%s.csv" % doc_part),
               "w") as fd:
         fd.write(",".join(doc_columns) + "\n")
         cursor.copy_to(fd, "(%s)" % doc_id_sql, sep=",")
@@ -174,7 +174,7 @@ def doc_count_query(doc_part, db_kwds, schema, out_data_dir,
             t0 = datetime.now()
             count_sql = gen_count_sql(doc_sql, doc_part, term_part,
                                       count_part)
-            count_f = os.path.join(out_data_dir,
+            count_f = os.path.join(out_dir,
                                    "count_%s_%s_%s.csv" % (doc_part,
                                                            term_part,
                                                            count_part))
@@ -190,7 +190,7 @@ def doc_count_query(doc_part, db_kwds, schema, out_data_dir,
 
 def query_wrapper(doc_partitions, term_partitions, count_partitions, db_kwds,
                   schema, doc_columns, term_columns, count_columns, n_jobs,
-                  out_data_dir, gen_full_doc_sql_kwds, gen_term_sql_kwds,
+                  out_dir, gen_full_doc_sql_kwds, gen_term_sql_kwds,
                   logger=None, **kwds):
     """runs a query on the text database to build a DTM
 
@@ -215,7 +215,7 @@ def query_wrapper(doc_partitions, term_partitions, count_partitions, db_kwds,
         list of columns for resulting count files
     n_jobs : int
         number of jobs for multiprocessing
-    out_data_dir : str
+    out_dir : str
         location where output files will be stored
     gen_full_doc_sql_kwds : dictionary
         dict to pass to gen_full_doc_sql method
@@ -253,14 +253,14 @@ def query_wrapper(doc_partitions, term_partitions, count_partitions, db_kwds,
     # create tmp term tables and write to the output dir
     Parallel(n_jobs=n_jobs)(
         delayed(term_query)(
-            term_part, db_kwds, schema, out_data_dir, term_columns,
+            term_part, db_kwds, schema, out_dir, term_columns,
             gen_term_sql, gen_term_sql_kwds, logger)
         for term_part in term_partitions)
 
     # write doc_id and count files for each doc_part
     Parallel(n_jobs=n_jobs)(
         delayed(doc_count_query)(
-            doc_part, db_kwds, schema, out_data_dir, term_partitions,
+            doc_part, db_kwds, schema, out_dir, term_partitions,
             count_partitions, doc_columns, count_columns,
             gen_full_doc_sql, gen_count_sql, gen_full_doc_sql_kwds,
             logger)

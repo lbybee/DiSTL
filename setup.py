@@ -1,12 +1,5 @@
-from  setuptools import setup
+from  setuptools import setup, find_packages
 
 setup(name="DiSTL",
-      packages=["DiSTL"])
-setup(name="DiSTL.populate",
-      packages=["DiSTL.populate"])
-setup(name="DiSTL.query",
-      packages=["DiSTL.query"])
-setup(name="DiSTL.post_process",
-      packages=["DiSTL.post_process"])
-setup(name="DiSTL.wrappers",
-      packages=["DiSTL.wrappers"])
+      packages=find_packages(),
+      ,)

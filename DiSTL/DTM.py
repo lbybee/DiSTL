@@ -180,20 +180,20 @@ class DTM(object):
             urlpath for count_df
         """
 
-        dtm = self.persist()
+#        self = self.persist()
 
         if not out_dir:
             out_dir = "."
-        if dtm.doc_fpat:
-            doc_fpat = dtm.doc_fpat
+        if self.doc_fpat:
+            doc_fpat = self.doc_fpat
         else:
             doc_fpat = [("%d" % d).zfill(2) for d in
-                        range(dtm.npartitions[0])]
-        if dtm.term_fpat:
-            term_fpat = dtm.term_fpat
+                        range(self.npartitions[0])]
+        if self.term_fpat:
+            term_fpat = self.term_fpat
         else:
             term_fpat = [("%d" % d).zfill(2) for d in
-                         range(dtm.npartitions[1])]
+                         range(self.npartitions[1])]
 
         if not doc_urlpath:
             doc_urlpath = [os.path.join(out_dir, "doc_%s.csv" % f)
@@ -207,9 +207,9 @@ class DTM(object):
                              for d_f in doc_fpat
                              for t_f in term_fpat]
 
-        dtm.doc_df.to_csv(doc_urlpath, index=False, **kwargs)
-        dtm.term_df.to_csv(term_urlpath, index=False, **kwargs)
-        dtm.count_df.to_csv(count_urlpath, index=False, **kwargs)
+        self.doc_df.to_csv(doc_urlpath, index=False, **kwargs)
+        self.term_df.to_csv(term_urlpath, index=False, **kwargs)
+        self.count_df.to_csv(count_urlpath, index=False, **kwargs)
 
 
     def repartition_doc(self, npartitions):
@@ -745,15 +745,38 @@ class DTM(object):
         updated DTM
         """
 
+        # TODO this currently doesn't really compare dataframes
+
         # all metadata must be the same between DTMs to add
-        if self.doc_df != new_dtm.doc_df:
+        if len(self.doc_df) != len(new_dtm.doc_df):
             raise ValueError("main and new DTM must share same doc_df")
-        elif self.term_df != new_dtm.term_df:
+        elif len(self.term_df) != len(new_dtm.term_df):
             raise ValueError("main and new DTM must share same term_df")
 
         kwargs["new_count"] = new_dtm.count_df
-        return self.map_partitions(add_part, alt="new_count", axis="count",
-                                   **kwargs)
+        return self.map_partitions(add_part, alt="new_count",
+                                   axis="count", doc_index=self.doc_index,
+                                   term_index=self.term_index, **kwargs)
+
+
+    def sort(self):
+        """sorts the DTM according to doc and term ids
+
+        Returns
+        -------
+        updated sorted DTM
+        """
+
+        dtm = self.copy()
+
+        doc_fn = lambda x: x.sort_values(self.doc_index)
+        dtm.doc_df = dtm.doc_df.map_partitions(doc_fn)
+        term_fn = lambda x: x.sort_values(self.term_index)
+        dtm.term_df = dtm.term_df.map_partitions(term_fn)
+        count_fn = lambda x: x.sort_values([self.doc_index, self.term_index])
+        dtm.count_df = dtm.count_df.map_partitions(count_fn)
+
+        return dtm
 
 
     def merge(self, new_df, axis="doc", **kwargs):

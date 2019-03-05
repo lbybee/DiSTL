@@ -180,7 +180,7 @@ def merge_part(main_df, new_df, **kwargs):
     return main_df
 
 
-def add_part(main_count, new_count, **kwargs):
+def add_part(main_count, new_count, doc_index, term_index, **kwargs):
     """takes a count_df partition from the main DTM and a count_df partition
     from the new DTM and sums them, returning the sum
 
@@ -190,6 +190,10 @@ def add_part(main_count, new_count, **kwargs):
         main count_df partition
     new_count : pandas df
         new count_df partition
+    doc_index : str
+        label for doc index
+    term_index : str
+        label for term index
 
     Returns
     -------
@@ -198,13 +202,13 @@ def add_part(main_count, new_count, **kwargs):
 
     # TODO can we generalize this set and reset procedure for multiindices?
 
-    main_count = main_count.set_index([self.doc_index, self.term_index])
-    new_count = new_count.set_index([self.doc_index, self.term_index])
+    main_count = main_count.set_index([doc_index, term_index])
+    new_count = new_count.set_index([doc_index, term_index])
 
     main_count = main_count.add(new_count, fill_value=0, **kwargs)
     main_count = main_count.reset_index()
 
-    return main_count_i
+    return main_count
 
 
 def sample_part(df, **kwargs):

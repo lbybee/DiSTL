@@ -12,7 +12,7 @@ import os
 ##############################################################################
 
 def txtdb_query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
-                doc_columns, term_columns, count_columns,
+                doc_columns_map, term_columns_map, count_columns_map,
                 doc_partitions=[None], term_partitions=[None],
                 count_partitions=[None], doc_query_kwds={},
                 term_query_kwds={}, count_query_kwds={},
@@ -30,12 +30,12 @@ def txtdb_query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
     count_sql_jtstr : jinja template str
         template which takes a doc query, term part and count part as input
         to generate a count query
-    doc_columns : list
-        list of columns for resulting doc metadata files
-    term_columns : list
-        list of columns for resulting term metadata files
-    count_columns : list
-        list of columns for resulting count files
+    doc_columns_map : dict
+        mapping from db doc metadata column names to csv doc column names
+    term_columns_map : dict
+        mapping from db term metadata column names to csv term column names
+    count_columns_map : dict
+        mapping from db count column names to csv count column names
     doc_partitions : list
         list of partition labels for doc axis (e.g. dates)
     term_partitions : list
@@ -78,7 +78,7 @@ def txtdb_query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
     coordinator.map(term_query, term_partitions,
                     term_sql_jtstr=term_sql_jtstr,
                     term_query_kwds=term_query_kwds,
-                    term_columns=term_columns,
+                    term_columns_map=term_columns_map,
                     db_kwds=db_kwds, out_dir=out_dir)
 
     # write doc_id and count files for each doc_part
@@ -89,8 +89,8 @@ def txtdb_query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
                     count_sql_jtstr=count_sql_jtstr,
                     doc_query_kwds=doc_query_kwds,
                     count_query_kwds=count_query_kwds,
-                    doc_columns=doc_columns,
-                    count_columns=count_columns,
+                    doc_columns_map=doc_columns_map,
+                    count_columns_map=count_columns_map,
                     db_kwds=db_kwds, out_dir=out_dir)
 
     # drop tmp tables
@@ -126,7 +126,7 @@ def psycopg2_connect(schema, **conn_kwds):
     return conn, cursor
 
 
-def term_query(term_part, term_sql_jtstr, term_query_kwds, term_columns,
+def term_query(term_part, term_sql_jtstr, term_query_kwds, term_columns_map,
                db_kwds, out_dir):
     """create temporary term table from query and store corresponding csv
 
@@ -139,8 +139,8 @@ def term_query(term_part, term_sql_jtstr, term_query_kwds, term_columns,
         template which takes a term part as input to generate a term query
     term_query_kwds : dict or None
         additional key-words for rendering term query from template
-    term_columns : list
-        list of columns for resulting term metadata files
+    term_columns_map : dict
+        mapping from db term metadata column names to csv term column names
     db_kwds : dict-like
         key-words passed to open psycopg2_connect
     out_dir : str
@@ -173,12 +173,14 @@ def term_query(term_part, term_sql_jtstr, term_query_kwds, term_columns,
     conn.commit()
 
     # dump temporary term table to csv
-    header = ",".join(term_columns)
-    copy_sql = ("(SELECT {{ header }} FROM "
+    select = ["%s AS %s" % (k, term_columns_map[k]) for k in term_columns_map]
+    select = ",".join(select)
+    header = ",".join(list(term_columns_map.values()))
+    copy_sql = ("(SELECT {{ select }} FROM "
                 "tmp_term"
                 "{% if term_part %}_{{ term_part }}{% endif %})")
     template = Template(copy_sql)
-    copy_sql = template.render(header=header, term_part=term_part)
+    copy_sql = template.render(select=select, term_part=term_part)
     fname = "term{% if term_part %}_{{ term_part }}{% endif %}.csv"
     fname = Template(fname).render(term_part=term_part)
     with open(os.path.join(out_dir, fname), "w") as fd:
@@ -220,7 +222,7 @@ def drop_temp_term_table(term_part, db_kwds):
 
 def doc_count_query(doc_part, term_partitions, count_partitions,
                     doc_sql_jtstr, count_sql_jtstr, doc_query_kwds,
-                    count_query_kwds, doc_columns, count_columns,
+                    count_query_kwds, doc_columns_map, count_columns_map,
                     db_kwds, out_dir):
     """query the docs and counts for a given doc part
 
@@ -241,12 +243,10 @@ def doc_count_query(doc_part, term_partitions, count_partitions,
         additional key-words for rendering doc query from template
     count_query_kwds : dict or None
         additional key-words for rendering count query from template
-    doc_columns : list
-        list of columns for resulting doc metadata files
-    term_columns : list
-        list of columns for resulting term metadata files
-    count_columns : list
-        list of columns for resulting count files
+    doc_columns_map : dict
+        mapping from db doc metadata column names to csv doc column names
+    count_columns_map : dict
+        mapping from db count column names to csv count column names
     db_kwds : dict-like
         key-words passed to open psycopg2_connect
     out_dir : str
@@ -266,10 +266,12 @@ def doc_count_query(doc_part, term_partitions, count_partitions,
     doc_query_sql = template.render(doc_part=doc_part, **doc_query_kwds)
 
     # dump doc metadata
-    header = ",".join(doc_columns)
-    copy_sql = "SELECT {{ header }} FROM ({{ doc_query_sql }}) AS tmp_tab"
+    select = ["%s AS %s" % (k, doc_columns_map[k]) for k in doc_columns_map]
+    select = ",".join(select)
+    header = ",".join(list(doc_columns_map.values()))
+    copy_sql = "SELECT {{ select }} FROM ({{ doc_query_sql }}) AS tmp_tab"
     template = Template(copy_sql)
-    copy_sql = template.render(header=header, doc_query_sql=doc_query_sql)
+    copy_sql = template.render(select=select, doc_query_sql=doc_query_sql)
     fname = ("doc"
              "{% if doc_part %}_{{ doc_part }}{% endif %}"
              ".csv")
@@ -279,16 +281,23 @@ def doc_count_query(doc_part, term_partitions, count_partitions,
         cursor.copy_to(fd, "(%s)" % copy_sql, sep=",")
 
     # dump counts
-    header = ",".join(count_columns)
+    select = ["%s AS %s" % (k, count_columns_map[k])
+              for k in count_columns_map]
+    select = ",".join(select)
+    header = ",".join(list(count_columns_map.values()))
     for term_part in term_partitions:
         for count_part in count_partitions:
             template = Template(count_sql_jtstr)
-            copy_sql = template.render(header=header,
-                                       doc_query_sql=doc_query_sql,
-                                       doc_part=doc_part,
-                                       term_part=term_part,
-                                       count_part=count_part,
-                                       **count_query_kwds)
+            count_query_sql = template.render(doc_query_sql=doc_query_sql,
+                                              doc_part=doc_part,
+                                              term_part=term_part,
+                                              count_part=count_part,
+                                              **count_query_kwds)
+            copy_sql = ("SELECT {{ select }} FROM ({{ count_query_sql }}) "
+                        "AS tmp_tab")
+            template = Template(copy_sql)
+            copy_sql = template.render(select=select,
+                                      count_query_sql=count_query_sql)
             fname = ("count"
                      "{% if doc_part %}_{{ doc_part }}{% endif %}"
                      "{% if term_part %}_{{ term_part }}{% endif %}"

@@ -72,7 +72,8 @@ def txtdb_query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
     coordinator = Coordinator(gather=True, **coordinator_kwds)
 
     # drop any existing tmp tables
-    coordinator.map(drop_temp_term_table, term_partitions, db_kwds=db_kwds)
+    coordinator.map(drop_temp_term_table, term_partitions, db_kwds=db_kwds,
+                    cache=False)
 
     # create tmp term tables and write to the output dir
     coordinator.map(term_query, term_partitions,
@@ -94,7 +95,8 @@ def txtdb_query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
                     db_kwds=db_kwds, out_dir=out_dir)
 
     # drop tmp tables
-    coordinator.map(drop_temp_term_table, term_partitions, db_kwds=db_kwds)
+    coordinator.map(drop_temp_term_table, term_partitions, db_kwds=db_kwds,
+                    cache=False)
 
 
 

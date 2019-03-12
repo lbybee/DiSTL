@@ -83,7 +83,7 @@ def query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
               term_sql_jtstr=term_sql_jtstr,
               term_query_kwds=term_query_kwds,
               term_columns_map=term_columns_map,
-              pure=False, **db_kwds)
+              pure=False, cache=False, **db_kwds)
 
     # write doc_id and count files for each doc_part
     coord.map(doc_count_query, doc_partitions,

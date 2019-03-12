@@ -72,18 +72,21 @@ def query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
     """
 
     # init Coordinator backend to run jobs
-    coord = Coordinator(gather=True, **coordinator_kwds)
+    # TODO can we handle caching better here? Since we output to tables
+    # the cache doesn't make sense except as a record of completion
+    # TODO add pure as a Coordinator option
+    coord = Coordinator(gather=True, cache=False, **coordinator_kwds)
 
     # drop any existing tmp tables
     coord.map(drop_temp_term_table, term_partitions,
-              cache=False, pure=False, **db_kwds)
+              pure=False, **db_kwds)
 
     # create tmp term tables and write to the output dir
     coord.map(term_query, term_partitions, out_dir=out_dir,
               term_sql_jtstr=term_sql_jtstr,
               term_query_kwds=term_query_kwds,
               term_columns_map=term_columns_map,
-              pure=False, cache=False, **db_kwds)
+              pure=False, **db_kwds)
 
     # write doc_id and count files for each doc_part
     coord.map(doc_count_query, doc_partitions,
@@ -99,7 +102,7 @@ def query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
 
     # drop tmp tables
     coord.map(drop_temp_term_table, term_partitions,
-              cache=False, pure=False, **db_kwds)
+              pure=False, **db_kwds)
 
 
 

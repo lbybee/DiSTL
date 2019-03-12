@@ -1,2 +1,2 @@
-from populate import *
-from query import *
+from .populate import populate
+from .query import query

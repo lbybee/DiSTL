@@ -2,8 +2,8 @@
 methods for building DTM from text database
 """
 from labbot.components import Coordinator
-from .utilities import pg_conn
 from jinja2 import Template
+import psycopg2
 import os
 
 
@@ -54,6 +54,10 @@ def query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
 
     Notes
     -----
+    - We need the coordinator to return the references so that dask
+      doesn't attempt to be too clever and apply certain operations before
+      others have finished
+
     - For naming conventions, in cases where there is only one partition,
       we represent this with None.  When the file/table names are generated
       we use this jinja template (same for doc/count as well):
@@ -67,25 +71,22 @@ def query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
       same set of doc/term partitions
     """
 
-    # decorate sub-functions
-    dec_dttt = pg_comp(**db_kwds)(drop_temp_term_table)
-    dec_dq = pg_conn(**db_kwds)(term_query)
-    dec_dcq = pg_conn(**db_kwds)(doc_count_query)
-
     # init Coordinator backend to run jobs
     coord = Coordinator(gather=True, **coordinator_kwds)
 
     # drop any existing tmp tables
-    coord.map(dec_dttt, term_partitions, cache=False)
+    coord.map(drop_temp_term_table, term_partitions,
+              cache=False, pure=False, **db_kwds)
 
     # create tmp term tables and write to the output dir
-    coord.map(dec_tq, term_partitions, out_dir=out_dir,
+    coord.map(term_query, term_partitions, out_dir=out_dir,
               term_sql_jtstr=term_sql_jtstr,
               term_query_kwds=term_query_kwds,
-              term_columns_map=term_columns_map)
+              term_columns_map=term_columns_map,
+              pure=False, **db_kwds)
 
     # write doc_id and count files for each doc_part
-    coord.map(dec_dcq, doc_partitions, out_dir=out_dir,
+    coord.map(doc_count_query, doc_partitions,
               term_partitions=term_partitions,
               count_partitions=count_partitions,
               doc_sql_jtstr=doc_sql_jtstr,
@@ -93,10 +94,12 @@ def query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
               doc_query_kwds=doc_query_kwds,
               count_query_kwds=count_query_kwds,
               doc_columns_map=doc_columns_map,
-              count_columns_map=count_columns_map)
+              count_columns_map=count_columns_map,
+              out_dir=out_dir, pure=False, **db_kwds)
 
     # drop tmp tables
-    coord.map(dec_dttt, term_partitions, cache=False)
+    coord.map(drop_temp_term_table, term_partitions,
+              cache=False, pure=False, **db_kwds)
 
 
 
@@ -105,7 +108,7 @@ def query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
 ##############################################################################
 
 def term_query(term_part, term_sql_jtstr, term_query_kwds, term_columns_map,
-               out_dir, **kwds):
+               out_dir, schema, **conn_kwds):
     """create temporary term table from query and store corresponding csv
 
 
@@ -121,10 +124,10 @@ def term_query(term_part, term_sql_jtstr, term_query_kwds, term_columns_map,
         mapping from db term metadata column names to csv term column names
     out_dir : str
         location where output files will be stored
-    conn : psycopg2 connection or None
-        connection instance for db
-    cursor : psycopg2 connection or None
-        cursor instance for db
+    schema : str
+        schema which we'd like to interact with
+    conn_kwds : dict
+        additional key words to establish connection
 
     Notes
     -----
@@ -137,8 +140,11 @@ def term_query(term_part, term_sql_jtstr, term_query_kwds, term_columns_map,
       performance for these large parallel queries)
     """
 
-    conn = kwds.pop("conn", None)
-    cursor = kwds.pop("cursor", None)
+    # establish postgres connection
+    conn = psycopg2.connect(**conn_kwds)
+    cursor = conn.cursor()
+    cursor.execute("SET search_path TO %s" % schema)
+    conn.commit()
 
     # create temporary table containing output from term_sql query
     template = Template(term_sql_jtstr)
@@ -167,22 +173,29 @@ def term_query(term_part, term_sql_jtstr, term_query_kwds, term_columns_map,
         fd.write(header + "\n")
         cursor.copy_to(fd, copy_sql, sep=",")
 
+    # close connection and cursor
+    cursor.close()
+    conn.close()
 
-def drop_temp_term_table(term_part, **kwds):
+
+def drop_temp_term_table(term_part, schema, **conn_kwds):
     """drops the corresponding temp term tables
 
     Parameters
     ----------
     term_part : str
         label for current term partition
-    conn : psycopg2 connection or None
-        connection instance for db
-    cursor : psycopg2 connection or None
-        cursor instance for db
+    schema : str
+        schema which we'd like to interact with
+    conn_kwds : dict
+        additional key words to establish connection
     """
 
-    conn = kwds.pop("conn", None)
-    cursor = kwds.pop("cursor", None)
+    # establish postgres connection
+    conn = psycopg2.connect(**conn_kwds)
+    cursor = conn.cursor()
+    cursor.execute("SET search_path TO %s" % schema)
+    conn.commit()
 
     # drop temporary table
     drop_sql = ("DROP TABLE IF EXISTS "
@@ -193,11 +206,15 @@ def drop_temp_term_table(term_part, **kwds):
     cursor.execute(drop_sql)
     conn.commit()
 
+    # close connection and cursor
+    cursor.close()
+    conn.close()
+
 
 def doc_count_query(doc_part, term_partitions, count_partitions,
                     doc_sql_jtstr, count_sql_jtstr, doc_query_kwds,
                     count_query_kwds, doc_columns_map, count_columns_map,
-                    out_dir, **kwds):
+                    out_dir, schema, **conn_kwds):
     """query the docs and counts for a given doc part
 
     Parameters
@@ -223,10 +240,10 @@ def doc_count_query(doc_part, term_partitions, count_partitions,
         mapping from db count column names to csv count column names
     out_dir : str
         location where output files will be stored
-    conn : psycopg2 connection or None
-        connection instance for db
-    cursor : psycopg2 connection or None
-        cursor instance for db
+    schema : str
+        schema which we'd like to interact with
+    conn_kwds : dict
+        additional key words to establish connection
 
     Notes
     -----
@@ -234,8 +251,11 @@ def doc_count_query(doc_part, term_partitions, count_partitions,
       as a query against the temporary term table
     """
 
-    conn = kwds.pop("conn", None)
-    cursor = kwds.pop("cursor", None)
+    # establish postgres connection
+    conn = psycopg2.connect(**conn_kwds)
+    cursor = conn.cursor()
+    cursor.execute("SET search_path TO %s" % schema)
+    conn.commit()
 
     # format doc query
     template = Template(doc_sql_jtstr)
@@ -285,3 +305,7 @@ def doc_count_query(doc_part, term_partitions, count_partitions,
             with open(os.path.join(out_dir, fname), "w") as fd:
                 fd.write(header + "\n")
                 cursor.copy_to(fd, "(%s)" % copy_sql, sep=",")
+
+    # close connection and cursor
+    cursor.close()
+    conn.close()

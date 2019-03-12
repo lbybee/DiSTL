@@ -310,10 +310,6 @@ def est_LDA_pass(mod):
 
     mod["z_trace"] = np.append(mod["z_trace"], np.sum(mod["z"] != z_prev))
 
-    # update model state with info about current runtime
-    t1 = datetime.now()
-    mod["state"] += "%s %s est pass\n" % (str(t1), str(t1 - mod["t0"]))
-
     return mod
 
 

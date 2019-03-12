@@ -15,7 +15,7 @@ def query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
           doc_columns_map, term_columns_map, count_columns_map,
           doc_partitions=[None], term_partitions=[None],
           count_partitions=[None], doc_query_kwds={}, term_query_kwds={},
-          count_query_kwds={}, db_kwds={}, **coordinator_kwds):
+          count_query_kwds={}, db_kwds={}, cache=False, **coordinator_kwds):
     """runs a query on the text database to build a DTM
 
     Parameters
@@ -49,6 +49,9 @@ def query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
         additional key-words for rendering count query from template
     db_kwds : dict-like
         key-words to handle psycopg2 database connection
+    cache : bool
+        whether to cache the coordinator func calls.  We default this to
+        off here because query funcs don't return output values
     coordinator_kwds : dict-like
         key-words to pass to init labbot Coordinator backend
 
@@ -72,10 +75,7 @@ def query(out_dir, doc_sql_jtstr, term_sql_jtstr, count_sql_jtstr,
     """
 
     # init Coordinator backend to run jobs
-    # TODO can we handle caching better here? Since we output to tables
-    # the cache doesn't make sense except as a record of completion
-    # TODO add pure as a Coordinator option
-    coord = Coordinator(gather=True, cache=False, **coordinator_kwds)
+    coord = Coordinator(gather=True, cache=cache, **coordinator_kwds)
 
     # drop any existing tmp tables
     coord.map(drop_temp_term_table, term_partitions,

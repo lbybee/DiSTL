@@ -1,1 +1,1 @@
-from .counter import unigram_counter
+from .counter import unigram_counter, ngram_counter

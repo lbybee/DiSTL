@@ -52,3 +52,22 @@ def unigram_counter(text_string, term_dict, term_map=None, **token_kwds):
         term_dict = counter_update(tokens, term_dict)
 
     return term_dict
+
+
+def ngram_counter(text_string, term_dict, term_map, n, **token_kwds):
+    """counter for ngrams"""
+
+    tokens = tokenizer(text_string, **token_kwds)
+    text_list = []
+    for t in tokens:
+        try:
+            t = term_map[t]
+            text_list.append(t)
+        except:
+            continue
+
+    text_list = [" ".join(tp) for tp in zip(*[text_list[i:] for i in range(n)])]
+
+    term_dict = counter_update(text_list, term_dict)
+
+    return term_dict

@@ -32,11 +32,6 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
         additional key-words to provide for backend coordinator
     """
 
-    # set default logging formats for various passes
-    est_postfmt=("{{t0}} {{func}}        {{mod.label}} "
-                 "est runtime: {{tdiff}} total runtime: {{tot_tdiff}} "
-                 "ztrace: {{mod.z_trace|last}} "
-                 "iter: {{mod.z_trace|length}}")
 
     # init coordinator
     coord = Coordinator(**kwds)
@@ -65,8 +60,8 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
     for s in range(niters):
 
         # estimate model state for current iteration
-        mod_l = coord.map(est_LDA_pass, mod_l, pure=False,
-                          postfmt=est_postfmt)
+        mod_l = coord.map(est_LDA_pass, mod_l, pure=False, log=True,
+                          func_logger=est_LDA_logger)
 
         # update global nw/nwsum
         nw_l = coord.map(extract_nw, mod_l, gather=True)
@@ -311,6 +306,15 @@ def est_LDA_pass(mod):
     mod["z_trace"] = np.append(mod["z_trace"], np.sum(mod["z"] != z_prev))
 
     return mod
+
+
+def est_LDA_logger(mod):
+    """produces a message based on current mod state for logging"""
+
+    lab = mod["label"]
+    zt = mod["z_trace"]
+    msg = "label: {0} iter: {1} trace: {2}".format(lab, len(zt) - 1, zt)
+    return msg
 
 
 def calc_post_theta(mod):

@@ -1,4 +1,4 @@
-from labbot.components import Coordinator
+from coordinator import Coordinator
 from LDA_c_methods import LDA_pass
 from datetime import datetime
 import pandas as pd

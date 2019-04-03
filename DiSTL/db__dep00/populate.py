@@ -1,4 +1,4 @@
-from labbot.components import Coordinator
+from grendel import Coordinator
 from jinja2 import Template
 import psycopg2
 import os
@@ -53,7 +53,7 @@ def populate(table_dir, sql_dir, doc_partitions=[None], term_partitions=[None],
     """
 
     # init Coordinator backend to run jobs
-    coord = Coordinator(gather=True, **coordinator_kwds)
+    coord = Coordinator(**coordinator_kwds)
 
     # create schema
     create_schema(**db_kwds)
@@ -63,17 +63,17 @@ def populate(table_dir, sql_dir, doc_partitions=[None], term_partitions=[None],
     term_pt = Template(term_pt)
     term_labels = [term_pt.render(term_part=t) for t in term_partitions]
     coord.map(populate_table, term_labels, table_dir=table_dir,
-              sql_dir=sql_dir, pure=False, **db_kwds)
+              sql_dir=sql_dir, pure=False, gather=True, **db_kwds)
 
     # populate the tag/metdata index tables
     coord.map(populate_table, tag_labels, table_dir=table_dir,
-              sql_dir=sql_dir, pure=False, **db_kwds)
+              sql_dir=sql_dir, pure=False, gather=True, **db_kwds)
 
     # populate the partitions
     coord.map(populate_dpart, doc_partitions, table_dir=table_dir,
               sql_dir=sql_dir, term_partitions=term_partitions,
               count_partitions=count_partitions, dec_pop_tab=dec_pop_tab,
-              tag_link_labels=tag_link_labels, pure=False)
+              tag_link_labels=tag_link_labels, pure=False, gather=True)
 
 
 ##############################################################################

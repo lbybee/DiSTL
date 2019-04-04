@@ -313,7 +313,7 @@ def est_LDA_logger(mod):
 
     lab = mod["label"]
     zt = mod["z_trace"]
-    msg = "label: {0} iter: {1} trace: {2}".format(lab, len(zt) - 1, zt)
+    msg = "label: {0} iter: {1} trace: {2}".format(lab, len(zt) - 1, zt[-1])
     return msg
 
 

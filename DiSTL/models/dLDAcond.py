@@ -1,5 +1,5 @@
+from LDAcond_c_methods import LDA_pass
 from coordinator import Coordinator
-from LDA_c_methods import LDA_pass
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -10,7 +10,7 @@ import os
 #                           Control/main functions                           #
 ##############################################################################
 
-def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
+def dLDAcond(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
     """fits a distributed instance of latent dirichlet allocation (LDA)
 
     Parameters
@@ -30,6 +30,10 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
         prior for beta
     kwds : dict
         additional key-words to provide for backend coordinator
+
+    Notes
+    -----
+    This introduces some supervision in the form of sentiment
     """
 
 
@@ -37,6 +41,7 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
     coord = Coordinator(**kwds)
 
     # load DTM metadata/info
+    # TODO add sentprob init
     D, V, count_fl = prep_DTM_info(DTM_dir)
 
     # init model
@@ -48,6 +53,10 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
     nwsum = np.zeros(K, dtype=np.intc)
     nw_l = coord.map(extract_nw, mod_l, gather=True)
     nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
+
+    # build global denominator for sentprob estimates
+    sentprob_den_l = coord.map(calc_sentprob_den, mod_l, gather=True)
+    sentprob_den = np.sum(sentprob_den_l, axis=1)
 
     # scatter global nw/nwsum
     nw_f = coord.scatter(nw, broadcast=True)
@@ -74,13 +83,23 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
         # readd global nw/nwsum to model nodes
         mod_l = coord.map(readd_nw, mod_l, nw=nw_f, nwsum=nwsum_f)
 
+        # update global sentiment globabilities
+        sentprob_num_l = coord.map(calc_sentprob_num, mod_l, gather=True)
+        sentprob = est_sentprob(sentprob_num_l, sentprob_den)
+
+        # scatter sentiment probs (O)
+        sentprob_f = coord.scatter(sentprob, broadcast=True)
+
+        # readd global sentprob to model nodes
+        mod_l = coord.map(readd_sentprob, mod_l, sentprob=sentprob_f)
+
     # add theta estimates to mod state and write node output
     mod_l = coord.map(calc_post_theta, mod_l)
     coord.map(write_mod_csv, mod_l, out_dir=out_dir, gather=True)
 
     # add phi and write global output
     phi = calc_post_phi(nw, nwsum, beta)
-    write_global_csv(nw, nwsum, phi, out_dir)
+    write_global_csv(nw, nwsum, phi, sentprob, out_dir)
 
 
 ##############################################################################
@@ -104,6 +123,8 @@ def prep_DTM_info(DTM_dir):
     count_fl : list
         list of files corresponding to counts (one for each node)
     """
+
+    # TODO add sent probabilities
 
     # get dimensions
     D_l = [len(open(os.path.join(DTM_dir, d), "r").readlines())
@@ -174,6 +195,8 @@ def init_model(DTM_shard_fname, K, V, alpha, beta):
     label : str
         label for current node
     """
+
+    # TODO add sent probabilities
 
     # prep model dict
     mod = {}
@@ -250,7 +273,7 @@ def write_mod_csv(mod, out_dir):
                    mod[var], delimiter=",")
 
 
-def write_global_csv(nw, nwsum, phi, out_dir):
+def write_global_csv(nw, nwsum, phi, sentprob, out_dir):
     """writes the global estimates to the specified out_dir
 
     Parameters
@@ -261,6 +284,8 @@ def write_global_csv(nw, nwsum, phi, out_dir):
         global values for nwsum
     phi : numpy array
         global values for phi
+    sentprob : numpy array
+        global values for sentiment probability
     out_dir : str
         location where output will be written
     """
@@ -268,6 +293,7 @@ def write_global_csv(nw, nwsum, phi, out_dir):
     np.savetxt(os.path.join(out_dir, "nw.csv"), nw, delimiter=",")
     np.savetxt(os.path.join(out_dir, "nwsum.csv"), nwsum, delimiter=",")
     np.savetxt(os.path.join(out_dir, "phi.csv"), phi, delimiter=",")
+    np.savetxt(os.path.join(out_dir, "sentprob.csv"), sentprob, delimiter=",")
 
 
 ##############################################################################
@@ -405,3 +431,41 @@ def aggregate_nw(nw_l, nw, nwsum):
     nwsum = (1 - part) * nwsum + n_nwsum
 
     return nw, nwsum
+
+
+def calc_sentprob_den(mod_l):
+
+    # TODO
+
+    return None
+
+
+def calc_sentprob_num(mod):
+    """calculates the sentiment probability numerator for each partition"""
+
+    sentprob_num = mod["theta"].T.dot(mod["retp"])
+    return sentprob_num
+
+
+def readd_sentprob(mod, sentprob):
+    """updates the provided model state to reflect global sentprob"""
+
+    mod["sentprob"] = sentprob
+
+    return mod
+
+
+def est_sentprob(sentprob_num_l, sentprob_den):
+    """estimates the global sentiment probability"""
+
+    # TODO
+
+    sentprob_num = np.sum(sentprob_num_l, axis=1)
+    sentprob = sentprob_num.dot(sentprob_den)
+
+    # handle zeros
+    sentprob[sentprob < 0] = 0
+
+    # renormalize
+
+    return sentprob

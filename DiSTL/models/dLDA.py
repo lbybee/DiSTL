@@ -32,29 +32,40 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
         additional key-words to provide for backend coordinator
     """
 
+    t0 = datetime.now()
 
     # init coordinator
     coord = Coordinator(**kwds)
 
     # load DTM metadata/info
     D, V, count_fl = prep_DTM_info(DTM_dir)
+    with open("state.log", "a") as fd:
+        fd.write("%s,%s\n" % (str(datetime.now() - t0), "info"))
 
     # init model
     mod_l = coord.map(init_model, count_fl, K=K, V=V,
                       alpha=alpha, beta=beta)
+    with open("state.log", "a") as fd:
+        fd.write("%s,%s\n" % (str(datetime.now() - t0), "init"))
 
     # create initial nw/nwsum
     nw = np.zeros((K, V), dtype=np.intc)
     nwsum = np.zeros(K, dtype=np.intc)
     nw_l = coord.map(extract_nw, mod_l, gather=True)
     nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
+    with open("state.log", "a") as fd:
+        fd.write("%s,%s\n" % (str(datetime.now() - t0), "base nw"))
 
     # scatter global nw/nwsum
     nw_f = coord.scatter(nw, broadcast=True)
     nwsum_f = coord.scatter(nwsum, broadcast=True)
+    with open("state.log", "a") as fd:
+        fd.write("%s,%s\n" % (str(datetime.now() - t0), "scatter nw"))
 
     # readd global nw/nwsum to model nodes
     mod_l = coord.map(readd_nw, mod_l, nw=nw_f, nwsum=nwsum_f)
+    with open("state.log", "a") as fd:
+        fd.write("%s,%s\n" % (str(datetime.now() - t0), "readd nw"))
 
     # fit iterations
     for s in range(niters):
@@ -62,6 +73,8 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
         # estimate model state for current iteration
         mod_l = coord.map(est_LDA_pass, mod_l, pure=False, log=True,
                           func_logger=est_LDA_logger)
+        with open("state.log", "a") as fd:
+            fd.write("%s,%s,%d\n" % (str(datetime.now() - t0), "est", s))
 
         # update global nw/nwsum
         nw_l = coord.map(extract_nw, mod_l, gather=True)

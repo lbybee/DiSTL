@@ -40,16 +40,13 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         additional key-words to provide for backend coordinator
     """
 
-    # init coordinator
-    coord = Coordinator(**kwds)
-
     # load DTM metadata/info
     D, V, count_fl = prep_DTM_info(DTM_dir)
 
     # init model
     mod_l = [init_model(f, K=K, V=V, alpha=alpha, beta=beta)
              for f in count_fl]
-    mod = agg_mod_l(mod_l)
+    mod = aggregate_mod(mod_l)
 
     # create initial nw/nwsum
 
@@ -67,14 +64,108 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     write_mod_csv(mod, out_dir)
 
     # grab aggregates
-    nw = np.zeros((K, V), dtype=np.intc)
-    nwsum = np.zeros(K, dtype=np.intc)
-    nw_t = extract_nw(mod)
-    nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
+    nw = mod["nw"]
+    nwsum = mod["nwsum"]
 
     # add phi and write global output
     phi = calc_post_phi(nw, nwsum, beta)
     write_global_csv(nw, nwsum, phi, out_dir)
+
+
+def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
+         fpart_ln=-1, LDA_method="full", **kwds):
+    """fits a online instance of latent dirichlet allocation (LDA)
+
+    Parameters
+    ----------
+    DTM_dir : str
+        location where document term matrix is located, should be formatted
+        according to DiSTL DTM format
+    out_dir : str
+        location where topic model will be written
+    K : scalar
+        number of topics to estimate
+    niters : scalar
+        number of iterations for Gibbs samplers
+    alpha : scalar
+        prior for theta
+    beta : scalar
+        prior for beta
+    fpart_ln : scalar
+        length of of partitions for initial fit
+        (all remaining parts are fit online)
+    LDA_method : str
+        type of LDA method used for estimation
+
+        full : take gibbs sample for every term
+
+        efficient : take gibbs sample for every unique term
+
+    kwds : dict
+        additional key-words to provide for backend coordinator
+    """
+
+    # load DTM metadata/info
+    D, V, count_fl = prep_DTM_info(DTM_dir)
+
+    # prep fpart
+    if fpart_ln == -1:
+        fpart_ln = len(count_fl)
+
+    # init model
+    mod_l = [init_model(f, K=K, V=V, alpha=alpha, beta=beta)
+             for f in count_fl]
+    mod = aggregate_mod(mod_l[:fpart_ln])
+    o_mod_l = mod_l[fpart_ln:]
+
+    # fit first part
+    for s in range(niters):
+
+        # estimate model state for current iteration
+        mod = est_LDA_pass(mod, LDA_method=LDA_method)
+        msg = est_LDA_logger(mod)
+        with open("log.txt", "a") as fd:
+            fd.write(msg + "\n")
+
+    # add theta estimates to mod state and write node output
+    mod = calc_post_theta(mod)
+    write_mod_csv(mod, out_dir)
+
+    # grab aggregates
+    nw = mod["nw"]
+    nwsum = mod["nwsum"]
+
+    # add phi and write global output
+    phi = calc_post_phi(nw, nwsum, beta)
+    write_online_global_csv(mod["label"], nw, nwsum, phi, out_dir)
+
+    # now repeat the process adding new partitions online
+    for mod in o_mod_l:
+
+        # update nw/nwsum
+        mod["nw"] += nw
+        mod["nwsum"] += nwsum
+
+        # fit first part
+        for s in range(niters):
+
+            # estimate model state for current iteration
+            mod = est_LDA_pass(mod, LDA_method=LDA_method)
+            msg = est_LDA_logger(mod)
+            with open("log.txt", "a") as fd:
+                fd.write(msg + "\n")
+
+        # add theta estimates to mod state and write node output
+        mod = calc_post_theta(mod)
+        write_mod_csv(mod, out_dir)
+
+        # grab aggregates
+        nw = mod["nw"]
+        nwsum = mod["nwsum"]
+
+        # add phi and write global output
+        phi = calc_post_phi(nw, nwsum, beta)
+        write_online_global_csv(mod["label"], nw, nwsum, phi, out_dir)
 
 
 def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
@@ -346,6 +437,31 @@ def write_global_csv(nw, nwsum, phi, out_dir):
     np.savetxt(os.path.join(out_dir, "phi.csv"), phi, delimiter=",")
 
 
+def write_online_global_csv(label, nw, nwsum, phi, out_dir):
+    """writes the global estimates to the specified out_dir for oLDA
+
+    Parameters
+    ----------
+    label : str
+        label for current online partition
+    nw : numpy array
+        global values for nw
+    nwsum : numpy array
+        global values for nwsum
+    phi : numpy array
+        global values for phi
+    out_dir : str
+        location where output will be written
+    """
+
+    np.savetxt(os.path.join(out_dir, "nw_%s.csv" % label),
+               nw, delimiter=",")
+    np.savetxt(os.path.join(out_dir, "nwsum_%s.csv" % label),
+               nwsum, delimiter=",")
+    np.savetxt(os.path.join(out_dir, "phi_%s.csv" % label),
+               phi, delimiter=",")
+
+
 ##############################################################################
 #                            Pure/calc functions                             #
 ##############################################################################
@@ -488,3 +604,62 @@ def aggregate_nw(nw_l, nw, nwsum):
     nwsum = (1 - part) * nwsum + n_nwsum
 
     return nw, nwsum
+
+
+def aggregate_mod(mod_l):
+    """aggregate a list of model objects into one model object
+
+    Parameters
+    ----------
+    mod_l : list
+        list of dictionaries where each corresponds to a model object
+
+    Returns
+    -------
+    mod : dict
+        model object aggregate of list values
+    """
+
+    mod = {}
+
+    # build shared vars
+    mod["K"] = mod_l[0]["K"]
+    mod["V"] = mod_l[0]["V"]
+    mod["alpha"] = mod_l[0]["alpha"]
+    mod["beta"] = mod_l[0]["beta"]
+    mod["z_trace"] = mod_l[0]["z_trace"]
+
+    # build joined vars
+    mod["D"] = sum([m["D"] for m in mod_l])
+    mod["NZ"] = sum([m["NZ"] for m in mod_l])
+
+    # setup label
+    # TODO is this the most sensible choice here?
+    mod["label"] = mod_l[-1]["label"]
+
+    # build count with offset
+    count_l = []
+    offset = 0
+    for m in mod_l:
+        c = m["count"]
+        c[:,0] += offset
+        count_l.append(c)
+        offset += m["D"]
+    mod["count"] = np.concatenate(count_l)
+    mod["count"] = np.array(mod["count"], dtype=np.intc)
+
+    # build doc aggs
+    mod["z"] = np.concatenate([m["z"] for m in mod_l])
+    mod["z"] = np.array(mod["z"], dtype=np.intc)
+    mod["nd"] = np.concatenate([m["nd"] for m in mod_l])
+    mod["nd"] = np.array(mod["nd"], dtype=np.intc)
+    mod["ndsum"] = np.concatenate([m["ndsum"] for m in mod_l])
+    mod["ndsum"] = np.array(mod["ndsum"], dtype=np.intc)
+
+    # build term aggs
+    mod["nw"] = np.array([m["nw"] for m in mod_l]).sum(axis=0)
+    mod["nw"] = np.array(mod["nw"], dtype=np.intc)
+    mod["nwsum"] = np.array([m["nwsum"] for m in mod_l]).sum(axis=0)
+    mod["nwsum"] = np.array(mod["nwsum"], dtype=np.intc)
+
+    return mod

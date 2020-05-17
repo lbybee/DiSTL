@@ -1,5 +1,5 @@
 from coordinator import Coordinator
-from LDA_c_methods import LDA_pass
+from eLDA_c_methods import LDA_pass
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -10,8 +10,8 @@ import os
 #                           Control/main functions                           #
 ##############################################################################
 
-def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
-    """fits a distributed instance of latent dirichlet allocation (LDA)
+def edLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
+    """fits distributed efficient latent dirichlet allocation (LDA)
 
     Parameters
     ----------
@@ -202,10 +202,7 @@ def init_model(DTM_shard_fname, K, V, alpha, beta):
     mod["NZ"] = NZ
 
     # init z
-    N = np.sum(count[:,2])
-    # we generate zb such that we can aggregate quickly in the nd below
-    zb = np.random.randint(0, high=K, size=NZ, dtype=np.intc)
-    z = np.random.randint(0, high=K, size=N, dtype=np.intc)
+    z = np.random.randint(0, high=K, size=NZ, dtype=np.intc)
     mod["z"] = z
 
     # prep z_trace (will get built up during iterations)
@@ -215,7 +212,7 @@ def init_model(DTM_shard_fname, K, V, alpha, beta):
     # (can't we just do a similar groupby in numpy?)
 
     # generate nd/ndsum
-    dzdf = pd.DataFrame({"d": count[:,0], "z": zb, "count": count[:,2]})
+    dzdf = pd.DataFrame({"d": count[:,0], "z": z, "count": count[:,2]})
     dzarr = dzdf.groupby(["d", "z"], as_index=False).sum().values
     nd = np.zeros(shape=(D, K))
     nd[dzarr[:,0], dzarr[:,1]] = dzarr[:,2]
@@ -224,7 +221,7 @@ def init_model(DTM_shard_fname, K, V, alpha, beta):
     mod["ndsum"] = np.array(ndsum, dtype=np.intc)
 
     # generate nw/nwsum
-    vzdf = pd.DataFrame({"v": count[:,1], "z": zb, "count": count[:,2]})
+    vzdf = pd.DataFrame({"v": count[:,1], "z": z, "count": count[:,2]})
     vzarr = vzdf.groupby(["z", "v"], as_index=False).sum().values
     nw = np.zeros(shape=(K, V))
     nw[vzarr[:,0], vzarr[:,1]] = vzarr[:,2]

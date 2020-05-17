@@ -5,6 +5,9 @@ import numpy as np
 ext_modules=[Extension("LDA_c_methods",
                        sources=["DiSTL/models/LDA_c_methods.pyx"],
                        include_dirs=[np.get_include()]),
+              Extension("eLDA_c_methods",
+                        sources=["DiSTL/models/eLDA_c_methods.pyx"],
+                        include_dirs=[np.get_include()]),
 #             Extension("parsers",
 #                       sources=["DiSTL/parse/parsers.pyx"],
 #                       include_dirs=[np.get_include()])

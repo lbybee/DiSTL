@@ -1,5 +1,4 @@
-from coordinator import Coordinator
-from LDA_c_methods import LDA_pass
+from eLDA_c_methods import LDA_pass
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -10,8 +9,8 @@ import os
 #                           Control/main functions                           #
 ##############################################################################
 
-def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
-    """fits a distributed instance of latent dirichlet allocation (LDA)
+def eLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
+    """fits a sequential efficient latent dirichlet allocation (LDA)
 
     Parameters
     ----------
@@ -32,50 +31,34 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
         additional key-words to provide for backend coordinator
     """
 
-    # init coordinator
-    coord = Coordinator(**kwds)
-
     # load DTM metadata/info
     D, V, count_fl = prep_DTM_info(DTM_dir)
 
     # init model
-    mod_l = coord.map(init_model, count_fl, K=K, V=V,
-                      alpha=alpha, beta=beta)
+    mod_l = [init_model(count_f, K=K, V=V, alpha=alpha, beta=beta)
+             for count_f in count_fl]
 
     # create initial nw/nwsum
-    nw = np.zeros((K, V), dtype=np.intc)
-    nwsum = np.zeros(K, dtype=np.intc)
-    nw_l = coord.map(extract_nw, mod_l, gather=True)
-    nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
-
-    # scatter global nw/nwsum
-    nw_f = coord.scatter(nw, broadcast=True)
-    nwsum_f = coord.scatter(nwsum, broadcast=True)
-
-    # readd global nw/nwsum to model nodes
-    mod_l = coord.map(readd_nw, mod_l, nw=nw_f, nwsum=nwsum_f)
 
     # fit iterations
     for s in range(niters):
 
         # estimate model state for current iteration
-        mod_l = coord.map(est_LDA_pass, mod_l, pure=False, log=True,
-                          func_logger=est_LDA_logger)
-
-        # update global nw/nwsum
-        nw_l = coord.map(extract_nw, mod_l, gather=True)
-        nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
-
-        # scatter global nw/nwsum
-        nw_f = coord.scatter(nw, broadcast=True)
-        nwsum_f = coord.scatter(nwsum, broadcast=True)
-
-        # readd global nw/nwsum to model nodes
-        mod_l = coord.map(readd_nw, mod_l, nw=nw_f, nwsum=nwsum_f)
+        mod_l = [est_LDA_pass(m) for m in mod_l]
+        for m in mod_l:
+            msg = est_LDA_logger(m)
+            with open("log.txt", "a") as fd:
+                fd.write(msg + "\n")
 
     # add theta estimates to mod state and write node output
-    mod_l = coord.map(calc_post_theta, mod_l)
-    coord.map(write_mod_csv, mod_l, out_dir=out_dir, gather=True)
+    mod_l = [calc_post_theta(m) for m in mod_l]
+    [write_mod_csv(m, out_dir) for m in mod_l]
+
+    # grab aggregates
+    nw = np.zeros((K, V), dtype=np.intc)
+    nwsum = np.zeros(K, dtype=np.intc)
+    nw_l = [extract_nw(m) for m in mod_l]
+    nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
 
     # add phi and write global output
     phi = calc_post_phi(nw, nwsum, beta)
@@ -246,7 +229,7 @@ def write_mod_csv(mod, out_dir):
         location where output will be written
     """
 
-    var_l = ["z", "nd", "ndsum", "theta", "z_trace"]
+    var_l = ["nd", "ndsum", "theta", "z_trace"]
     for var in var_l:
         np.savetxt(os.path.join(out_dir, "%s_%s.csv" % (var, mod["label"])),
                    mod[var], delimiter=",")

@@ -38,7 +38,7 @@ def LDA_pass(int[:,:] count, int[:] z, int[:,:] nd, int[:] ndsum,
     ----------
     count : numpy array (NZ x 3)
         triplet representation for term counts for current node
-    z : numpy array (N x 1)
+    z : numpy array (NZ x 1)
         topic assignments for each term
     nd : numpy array (D x K)
         weighted (by term count) topic assigments for each document
@@ -71,31 +71,25 @@ def LDA_pass(int[:,:] count, int[:] z, int[:,:] nd, int[:] ndsum,
 
     cdef double[:] p = np.zeros(K)
 
-    cdef ind = 0
-
     for dv in range(NZ):
 
         d = count[dv,0]
         v = count[dv,1]
         count_dv = count[dv,2]
 
-        for n in range(count_dv):
+        topic = z[dv]
 
-            topic = z[ind]
+        nd[d,topic] -= count_dv
+        ndsum[d] -= count_dv
+        nw[topic,v] -= count_dv
+        nwsum[topic] -= count_dv
 
-            nd[d,topic] -= 1
-            ndsum[d] -= 1
-            nw[topic,v] -= 1
-            nwsum[topic] -= 1
+        topic = z_sample(nd[d,:], ndsum[d], nw[:,v], nwsum, count_dv, K,
+                         Kalpha, Vbeta, alpha, beta, p)
 
-            topic = z_sample(nd[d,:], ndsum[d], nw[:,v], nwsum, count_dv, K,
-                             Kalpha, Vbeta, alpha, beta, p)
+        nd[d,topic] += count_dv
+        ndsum[d] += count_dv
+        nw[topic,v] += count_dv
+        nwsum[topic] += count_dv
 
-            nd[d,topic] += 1
-            ndsum[d] += 1
-            nw[topic,v] += 1
-            nwsum[topic] += 1
-
-            z[ind] = topic
-
-            ind += 1
+        z[dv] = topic

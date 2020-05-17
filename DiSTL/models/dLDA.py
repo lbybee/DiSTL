@@ -1,5 +1,5 @@
+from LDA_c_methods import LDA_pass, eLDA_pass
 from coordinator import Coordinator
-from LDA_c_methods import LDA_pass
 from datetime import datetime
 import pandas as pd
 import numpy as np
@@ -276,13 +276,15 @@ def write_global_csv(nw, nwsum, phi, out_dir):
 #                            Pure/calc functions                             #
 ##############################################################################
 
-def est_LDA_pass(mod):
+def est_LDA_pass(mod, LDA_method="full"):
     """wrapper around the cython LDA_pass code to manage mod dict
 
     Parameters
     ----------
     mod : dict
         dictionary corresponding to model state for node
+    LDA_method : str
+        type of LDA method used for estimation
 
     Returns
     -------
@@ -297,7 +299,12 @@ def est_LDA_pass(mod):
 
     z_prev = mod["z"].copy()
 
-    LDA_pass(**mod)
+    if LDA_method == "full":
+        LDA_pass(**mod)
+    elif LDA_method == "efficient":
+        eLDA_pass(**mod)
+    else:
+        raise ValueError("Unknown LDA_method: %s" % LDA_method)
 
     mod["z_trace"] = np.append(mod["z_trace"], np.sum(mod["z"] != z_prev))
 

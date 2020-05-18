@@ -3,6 +3,7 @@ from coordinator import Coordinator
 from datetime import datetime
 import pandas as pd
 import numpy as np
+import glob
 import sys
 import os
 
@@ -44,11 +45,10 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     D, V, count_fl = prep_DTM_info(DTM_dir)
 
     # init model
-    mod_l = [init_model(f, K=K, V=V, alpha=alpha, beta=beta)
+    mod_l = [init_model(f, K=K, V=V, alpha=alpha, beta=beta,
+                        LDA_method=LDA_method)
              for f in count_fl]
     mod = aggregate_mod(mod_l)
-
-    # create initial nw/nwsum
 
     # fit iterations
     for s in range(niters):
@@ -113,7 +113,8 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         fpart_ln = len(count_fl)
 
     # init model
-    mod_l = [init_model(f, K=K, V=V, alpha=alpha, beta=beta)
+    mod_l = [init_model(f, K=K, V=V, alpha=alpha, beta=beta,
+                        LDA_method=LDA_method)
              for f in count_fl]
     mod = aggregate_mod(mod_l[:fpart_ln])
     o_mod_l = mod_l[fpart_ln:]
@@ -205,7 +206,7 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
 
     # init model
     mod_l = coord.map(init_model, count_fl, K=K, V=V,
-                      alpha=alpha, beta=beta)
+                      alpha=alpha, beta=beta, LDA_method=LDA_method)
 
     # create initial nw/nwsum
     nw = np.zeros((K, V), dtype=np.intc)
@@ -270,6 +271,7 @@ def prep_DTM_info(DTM_dir):
     """
 
     # get dimensions
+    # TODO handle doc/term more cleanly
     D_l = [len(open(os.path.join(DTM_dir, d), "r").readlines())
            for d in os.listdir(DTM_dir) if d[:3] == "doc"]
     D = sum(D_l) - len(D_l)
@@ -278,13 +280,12 @@ def prep_DTM_info(DTM_dir):
     V = sum(V_l) - len(V_l)
 
     # count files
-    count_fl = [os.path.join(DTM_dir, f) for f in os.listdir(DTM_dir)
-                if f[:5] == "count"]
+    count_fl = sorted(glob.glob(os.path.join(DTM_dir, "count_*.csv")))
 
     return D, V, count_fl
 
 
-def init_model(DTM_shard_fname, K, V, alpha, beta):
+def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method):
     """loads a count chunk onto a specified client node
 
     Parameters
@@ -299,6 +300,8 @@ def init_model(DTM_shard_fname, K, V, alpha, beta):
         prior to theta (topic loadings)
     beta : scalar
         prior for phi (topic components)
+    LDA_method : str
+        type of LDA method used for estimation
 
     Returns
     -------
@@ -339,6 +342,9 @@ def init_model(DTM_shard_fname, K, V, alpha, beta):
         label for current node
     """
 
+    # TODO currently the full method will fail in cases where the z
+    # doesn't align with our nd/nw construction, need to fix this
+
     # prep model dict
     mod = {}
 
@@ -367,10 +373,13 @@ def init_model(DTM_shard_fname, K, V, alpha, beta):
     mod["NZ"] = NZ
 
     # init z
-    N = np.sum(count[:,2])
-    # we generate zb such that we can aggregate quickly in the nd below
-    zb = np.random.randint(0, high=K, size=NZ, dtype=np.intc)
-    z = np.random.randint(0, high=K, size=N, dtype=np.intc)
+    if LDA_method == "full":
+        N = np.sum(count[:,2])
+        z = np.random.randint(0, high=K, size=N, dtype=np.intc)
+    elif LDA_method == "efficient":
+        z = np.random.randint(0, high=K, size=NZ, dtype=np.intc)
+    else:
+        raise ValueError("Unknown LDA_method: %s" % LDA_method)
     mod["z"] = z
 
     # prep z_trace (will get built up during iterations)
@@ -380,8 +389,13 @@ def init_model(DTM_shard_fname, K, V, alpha, beta):
     # (can't we just do a similar groupby in numpy?)
 
     # generate nd/ndsum
-    dzdf = pd.DataFrame({"d": count[:,0], "z": zb, "count": count[:,2]})
-    dzarr = dzdf.groupby(["d", "z"], as_index=False).sum().values
+    if LDA_method == "full":
+        dzdf = pd.DataFrame({"d": np.repeat(count[:,0], count[:,2]), "z": z})
+        dzdf["count"] = 1
+        dzarr = dzdf.groupby(["d", "z"], as_index=False).sum().values
+    elif LDA_method == "efficient":
+        dzdf = pd.DataFrame({"d": count[:,0], "z": z, "count": count[:,2]})
+        dzarr = dzdf.groupby(["d", "z"], as_index=False).sum().values
     nd = np.zeros(shape=(D, K))
     nd[dzarr[:,0], dzarr[:,1]] = dzarr[:,2]
     ndsum = nd.sum(axis=1)
@@ -389,8 +403,13 @@ def init_model(DTM_shard_fname, K, V, alpha, beta):
     mod["ndsum"] = np.array(ndsum, dtype=np.intc)
 
     # generate nw/nwsum
-    vzdf = pd.DataFrame({"v": count[:,1], "z": zb, "count": count[:,2]})
-    vzarr = vzdf.groupby(["z", "v"], as_index=False).sum().values
+    if LDA_method == "full":
+        vzdf = pd.DataFrame({"v": np.repeat(count[:,1], count[:,2]), "z": z})
+        vzdf["count"] = 1
+        vzarr = vzdf.groupby(["z", "v"], as_index=False).sum().values
+    elif LDA_method == "efficient":
+        vzdf = pd.DataFrame({"v": count[:,1], "z": z, "count": count[:,2]})
+        vzarr = vzdf.groupby(["z", "v"], as_index=False).sum().values
     nw = np.zeros(shape=(K, V))
     nw[vzarr[:,0], vzarr[:,1]] = vzarr[:,2]
     nwsum = nw.sum(axis=1)

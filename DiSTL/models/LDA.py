@@ -512,6 +512,8 @@ def est_LDA_pass(mod, LDA_method="full"):
         LDA_pass(**mod)
     elif LDA_method == "efficient":
         eLDA_pass(**mod)
+    elif LDA_method == "kernel":
+        svLDA_pass(**mod)
     else:
         raise ValueError("Unknown LDA_method: %s" % LDA_method)
 

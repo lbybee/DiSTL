@@ -1,4 +1,4 @@
-from LDA_c_methods import LDA_pass, eLDA_pass
+from LDA_c_methods import LDA_pass, eLDA_pass, svLDA_pass
 from coordinator import Coordinator
 from datetime import datetime
 import pandas as pd
@@ -376,7 +376,7 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method):
     if LDA_method == "full":
         N = np.sum(count[:,2])
         z = np.random.randint(0, high=K, size=N, dtype=np.intc)
-    elif LDA_method == "efficient":
+    elif LDA_method == "efficient" or LDA_method == "kernel":
         z = np.random.randint(0, high=K, size=NZ, dtype=np.intc)
     else:
         raise ValueError("Unknown LDA_method: %s" % LDA_method)
@@ -393,28 +393,36 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method):
         dzdf = pd.DataFrame({"d": np.repeat(count[:,0], count[:,2]), "z": z})
         dzdf["count"] = 1
         dzarr = dzdf.groupby(["d", "z"], as_index=False).sum().values
-    elif LDA_method == "efficient":
+    elif LDA_method == "efficient" or LDA_method == "kernel":
         dzdf = pd.DataFrame({"d": count[:,0], "z": z, "count": count[:,2]})
         dzarr = dzdf.groupby(["d", "z"], as_index=False).sum().values
     nd = np.zeros(shape=(D, K))
     nd[dzarr[:,0], dzarr[:,1]] = dzarr[:,2]
     ndsum = nd.sum(axis=1)
-    mod["nd"] = np.array(nd, dtype=np.intc)
-    mod["ndsum"] = np.array(ndsum, dtype=np.intc)
+    if LDA_method == "kernel":
+        mod["nd"] = np.array(nd)
+        mod["ndsum"] = np.array(ndsum)
+    else:
+        mod["nd"] = np.array(nd, dtype=np.intc)
+        mod["ndsum"] = np.array(ndsum, dtype=np.intc)
 
     # generate nw/nwsum
     if LDA_method == "full":
         vzdf = pd.DataFrame({"v": np.repeat(count[:,1], count[:,2]), "z": z})
         vzdf["count"] = 1
         vzarr = vzdf.groupby(["z", "v"], as_index=False).sum().values
-    elif LDA_method == "efficient":
+    elif LDA_method == "efficient" or LDA_method == "kernel":
         vzdf = pd.DataFrame({"v": count[:,1], "z": z, "count": count[:,2]})
         vzarr = vzdf.groupby(["z", "v"], as_index=False).sum().values
     nw = np.zeros(shape=(K, V))
     nw[vzarr[:,0], vzarr[:,1]] = vzarr[:,2]
     nwsum = nw.sum(axis=1)
-    mod["nw"] = np.array(nw, dtype=np.intc)
-    mod["nwsum"] = np.array(nwsum, dtype=np.intc)
+    if LDA_method == "kernel":
+        mod["nw"] = np.array(nw)
+        mod["nwsum"] = np.array(nwsum)
+    else:
+        mod["nw"] = np.array(nw, dtype=np.intc)
+        mod["nwsum"] = np.array(nwsum, dtype=np.intc)
 
     return mod
 

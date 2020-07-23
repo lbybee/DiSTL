@@ -1,4 +1,5 @@
-from LDA_c_methods import LDA_pass, eLDA_pass, svLDA_pass
+#from LDA_c_methods import LDA_pass, eLDA_pass, svLDA_pass
+from LDA_c_methods import LDA_pass, eLDA_pass
 from coordinator import Coordinator
 from datetime import datetime
 import pandas as pd
@@ -72,8 +73,8 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     write_global_csv(nw, nwsum, phi, out_dir)
 
 
-def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
-         fpart_ln=-1, LDA_method="full", **kwds):
+def oLDA(DTM_dir, out_dir, K, niters=500, niters_o=None, alpha=1.,
+         beta=1., fpart_ln=-1, LDA_method="full", rolling=False, **kwds):
     """fits a online instance of latent dirichlet allocation (LDA)
 
     Parameters
@@ -87,6 +88,9 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         number of topics to estimate
     niters : scalar
         number of iterations for Gibbs samplers
+    niters_o : scalar or None
+        if provided, used as alternative iteration count for subsequent
+        online fits (can be smaller than niters given smaller online data)
     alpha : scalar
         prior for theta
     beta : scalar
@@ -100,10 +104,16 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         full : take gibbs sample for every term
 
         efficient : take gibbs sample for every unique term
+    rolling : bool
+        indicator for whether to remove the trailing partition
 
     kwds : dict
         additional key-words to provide for backend coordinator
     """
+
+    # init niters_o
+    if niters_o is None:
+        niters_o = niters
 
     # load DTM metadata/info
     D, V, count_fl = prep_DTM_info(DTM_dir)
@@ -117,7 +127,6 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
                         LDA_method=LDA_method)
              for f in count_fl]
     mod = aggregate_mod(mod_l[:fpart_ln])
-    o_mod_l = mod_l[fpart_ln:]
 
     # fit first part
     for s in range(niters):
@@ -140,15 +149,40 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     phi = calc_post_phi(nw, nwsum, beta)
     write_online_global_csv(mod["label"], nw, nwsum, phi, out_dir)
 
+    # build z list if rolling
+    if rolling:
+        z_l = []
+        offset = 0
+        for m in mod_l:
+            z_l.append(mod["z"][offset:(m["NZ"]+offset)])
+            offset += m["NZ"]
+
     # now repeat the process adding new partitions online
-    for mod in o_mod_l:
+    for m_i, mod in enumerate(mod_l[fpart_ln:]):
+
+        # remove prev partition value if rolling
+        if rolling:
+            count_p = mod_l[m_i]["count"]
+            z_p = z_l[m_i]
+            K = mod["K"]
+            V = mod["V"]
+            nw_p = np.zeros(shape=(K, V))
+            for k in range(K):
+                count_pk = count_p[z_p == k,:]
+                nw_p[k,count_pk[:,1]] = count_pk[:,2]
+            nw_p = np.array(nw_p, dtype=np.intc)
+            nwsum_p = nw_p.sum(axis=1)
+            nwsum_p = np.array(nwsum_p, dtype=np.intc)
+
+            nw -= nw_p
+            nwsum -= nwsum_p
 
         # update nw/nwsum
         mod["nw"] += nw
         mod["nwsum"] += nwsum
 
-        # fit first part
-        for s in range(niters):
+        # fit online part
+        for s in range(niters_o):
 
             # estimate model state for current iteration
             mod = est_LDA_pass(mod, LDA_method=LDA_method)
@@ -167,6 +201,10 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         # add phi and write global output
         phi = calc_post_phi(nw, nwsum, beta)
         write_online_global_csv(mod["label"], nw, nwsum, phi, out_dir)
+
+        # update z_l if rolling
+        if rolling:
+            z_l.append(mod["z"])
 
 
 def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
@@ -280,7 +318,7 @@ def prep_DTM_info(DTM_dir):
     V = sum(V_l) - len(V_l)
 
     # count files
-    count_fl = sorted(glob.glob(os.path.join(DTM_dir, "count_*.csv")))
+    count_fl = sorted(glob.glob(os.path.join(DTM_dir, "count*.csv")))
 
     return D, V, count_fl
 
@@ -438,7 +476,8 @@ def write_mod_csv(mod, out_dir):
         location where output will be written
     """
 
-    var_l = ["nd", "ndsum", "theta", "z_trace"]
+#    var_l = ["nd", "ndsum", "theta", "z_trace"]
+    var_l = ["nd", "z_trace"]
     for var in var_l:
         np.savetxt(os.path.join(out_dir, "%s_%s.csv" % (var, mod["label"])),
                    mod[var], delimiter=",")
@@ -460,8 +499,8 @@ def write_global_csv(nw, nwsum, phi, out_dir):
     """
 
     np.savetxt(os.path.join(out_dir, "nw.csv"), nw, delimiter=",")
-    np.savetxt(os.path.join(out_dir, "nwsum.csv"), nwsum, delimiter=",")
-    np.savetxt(os.path.join(out_dir, "phi.csv"), phi, delimiter=",")
+#    np.savetxt(os.path.join(out_dir, "nwsum.csv"), nwsum, delimiter=",")
+#    np.savetxt(os.path.join(out_dir, "phi.csv"), phi, delimiter=",")
 
 
 def write_online_global_csv(label, nw, nwsum, phi, out_dir):
@@ -483,10 +522,10 @@ def write_online_global_csv(label, nw, nwsum, phi, out_dir):
 
     np.savetxt(os.path.join(out_dir, "nw_%s.csv" % label),
                nw, delimiter=",")
-    np.savetxt(os.path.join(out_dir, "nwsum_%s.csv" % label),
-               nwsum, delimiter=",")
-    np.savetxt(os.path.join(out_dir, "phi_%s.csv" % label),
-               phi, delimiter=",")
+#    np.savetxt(os.path.join(out_dir, "nwsum_%s.csv" % label),
+#               nwsum, delimiter=",")
+#    np.savetxt(os.path.join(out_dir, "phi_%s.csv" % label),
+#               phi, delimiter=",")
 
 
 ##############################################################################
@@ -520,8 +559,8 @@ def est_LDA_pass(mod, LDA_method="full"):
         LDA_pass(**mod)
     elif LDA_method == "efficient":
         eLDA_pass(**mod)
-    elif LDA_method == "kernel":
-        svLDA_pass(**mod)
+#    elif LDA_method == "kernel":
+#        svLDA_pass(**mod)
     else:
         raise ValueError("Unknown LDA_method: %s" % LDA_method)
 

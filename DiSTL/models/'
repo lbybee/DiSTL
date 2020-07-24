@@ -63,10 +63,13 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
             fd.write(msg + "\n")
 
     # add theta estimates to mod state and write node output
+    mod = calc_post_theta(mod)
     write_mod_csv(mod, out_dir)
 
     # add phi and write global output
-    write_global_csv(mod["nw"], out_dir)
+    phi = calc_post_phi(mod["nw"], mod["nwsum"], mod["beta"],
+                        mod["betasum"])
+    write_global_csv(phi, out_dir)
 
 
 def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
@@ -117,7 +120,20 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         # load model
         mod = init_model(f, K=K, V=V, alpha=alpha, beta=beta,
                          LDA_method=LDA_method, nw_l=nw_l,
-                         omega=omega)
+                         omega=omega, m_i=m_i)
+
+        # build prior
+        m_i = len(nw_l)
+        beta_m = np.ones((K, V)) * beta
+        N_m = mod["nw"].sum()
+        for bstp in range(m_i):
+            weight = omega ** (bstp + 1)
+            nw_b = nw_l[m_i-bstp-1]
+            N_b = nw_b.sum()
+            beta_m += (nw_b * weight / N_b) * N_m
+        betasum = beta_m.sum(axis=1)
+        mod["beta"] = beta_m
+        mod["betasum"] = betasum
 
         # fit online part
         for s in range(niters):
@@ -129,10 +145,13 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
                 fd.write(msg + "\n")
 
         # add theta estimates to mod state and write node output
+        mod = calc_post_theta(mod)
         write_mod_csv(mod, out_dir)
 
         # add phi and write global output
-        write_online_global_csv(mod["label"], mod["nw"], out_dir)
+        phi = calc_post_phi(mod["nw"], mod["nwsum"], mod["beta"],
+                            mod["betasum"])
+        write_online_global_csv(mod["label"], phi, out_dir)
 
         # add to nw l
         nw_l.append(mod["nw"])
@@ -209,11 +228,14 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
         # readd global nw/nwsum to model nodes
         mod_l = coord.map(readd_nw, mod_l, nw=nw_f, nwsum=nwsum_f)
 
-    # write node output
+    # add theta estimates to mod state and write node output
+    mod_l = coord.map(calc_post_theta, mod_l)
     coord.map(write_mod_csv, mod_l, out_dir=out_dir, gather=True)
 
     # add phi and write global output
-    write_global_csv(nw, out_dir)
+    # TODO properly handle vectorized beta here
+    phi = calc_post_phi(nw, nwsum, beta)
+    write_global_csv(phi, out_dir)
 
 
 ##############################################################################
@@ -354,6 +376,7 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
             beta_m += (nw_b * weight / N_b) * N_m
         mod["beta"] = beta_m
         mod["betasum"] = mod["beta"].sum(axis=1)
+
     else:
         mod["beta"] = np.ones((K, V)) * beta
         mod["betasum"] = mod["beta"].sum(axis=1)
@@ -363,17 +386,11 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
     mod["alphasum"] = mod["alpha"].sum(axis=1)
 
     # init z
-    # TODO currently full estimation doesn't support zprior
-    # p(z_i=k|w_i) = p(w_i|z_i=k)p(z_i=k)/p(w_i)
-    zprior = (mod["beta"] / mod["beta"].sum(axis=0)).T
     if LDA_method == "full":
         N = np.sum(count[:,2])
         z = np.random.randint(0, high=K, size=N, dtype=np.intc)
     elif LDA_method == "efficient":
-        zprob = zprior[count[:,1]]
-        u = np.random.rand(NZ, 1)
-        z = (u < zprob.cumsum(axis=1)).argmax(axis=1)
-        z = np.array(z, dtype=np.intc)
+        z = np.random.randint(0, high=K, size=NZ, dtype=np.intc)
     else:
         raise ValueError("Unknown LDA_method: %s" % LDA_method)
     mod["z"] = z
@@ -426,42 +443,43 @@ def write_mod_csv(mod, out_dir):
         location where output will be written
     """
 
-#    var_l = ["theta", "z", "z_trace"]
-    var_l = ["nd", "z_trace"]
+    var_l = ["theta", "z", "z_trace"]
     for var in var_l:
         np.savetxt(os.path.join(out_dir, "%s_%s.csv" % (var, mod["label"])),
                    mod[var], delimiter=",")
 
 
-def write_global_csv(nw, out_dir):
+def write_global_csv(phi, out_dir):
     """writes the global estimates to the specified out_dir
 
     Parameters
     ----------
-    nw : numpy array
-        global values for nw
+    phi : numpy array
+        global values for phi
     out_dir : str
         location where output will be written
     """
 
-    np.savetxt(os.path.join(out_dir, "nw.csv"), nw, delimiter=",")
+    np.savetxt(os.path.join(out_dir, "phi.csv"), phi, delimiter=",")
 
 
-def write_online_global_csv(label, nw, out_dir):
+def write_online_global_csv(label, phi, out_dir):
     """writes the global estimates to the specified out_dir for oLDA
 
     Parameters
     ----------
     label : str
         label for current online partition
-    nw : numpy array
-        global values for nw
+    phi : numpy array
+        global values for phi
+    z : numpy array
+        global values for z
     out_dir : str
         location where output will be written
     """
 
-    np.savetxt(os.path.join(out_dir, "nw_%s.csv" % label),
-               nw, delimiter=",")
+    np.savetxt(os.path.join(out_dir, "phi_%s.csv" % label),
+               phi, delimiter=",")
 
 
 ##############################################################################

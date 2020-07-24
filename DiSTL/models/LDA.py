@@ -1,4 +1,3 @@
-#from LDA_c_methods import LDA_pass, eLDA_pass, svLDA_pass
 from LDA_c_methods import LDA_pass, eLDA_pass
 from coordinator import Coordinator
 from datetime import datetime
@@ -64,17 +63,14 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     mod = calc_post_theta(mod)
     write_mod_csv(mod, out_dir)
 
-    # grab aggregates
-    nw = mod["nw"]
-    nwsum = mod["nwsum"]
-
     # add phi and write global output
-    phi = calc_post_phi(nw, nwsum, beta)
-    write_global_csv(nw, nwsum, phi, out_dir)
+    phi = calc_post_phi(mod["nw"], mod["nwsum"], mod["beta"],
+                        mod["betasum"])
+    write_global_csv(phi, out_dir)
 
 
 def oLDA(DTM_dir, out_dir, K, niters=500, niters_o=None, alpha=1.,
-         beta=1., fpart_ln=-1, LDA_method="full", rolling=False, **kwds):
+         beta=1., fpart_ln=1, LDA_method="full", omega=1., **kwds):
     """fits a online instance of latent dirichlet allocation (LDA)
 
     Parameters
@@ -94,22 +90,28 @@ def oLDA(DTM_dir, out_dir, K, niters=500, niters_o=None, alpha=1.,
     alpha : scalar
         prior for theta
     beta : scalar
-        prior for beta
+        starting prior for beta
     fpart_ln : scalar
-        length of of partitions for initial fit
-        (all remaining parts are fit online)
+        length of of partitions for initial/starting fit
+        (all remaining parts are fit online using prev fits as prior)
     LDA_method : str
         type of LDA method used for estimation
 
         full : take gibbs sample for every term
 
         efficient : take gibbs sample for every unique term
-    rolling : bool
-        indicator for whether to remove the trailing partition
+    omega : scalar
+        weight value for using previous phi fits as prior
 
     kwds : dict
         additional key-words to provide for backend coordinator
     """
+
+    ### init model ###
+
+    # fail if fpart not sensible
+    if fpart_ln < 0:
+        raise ValueError("Unestimable fpart_ln: %d" % fpart_ln)
 
     # init niters_o
     if niters_o is None:
@@ -118,68 +120,66 @@ def oLDA(DTM_dir, out_dir, K, niters=500, niters_o=None, alpha=1.,
     # load DTM metadata/info
     D, V, count_fl = prep_DTM_info(DTM_dir)
 
-    # prep fpart
-    if fpart_ln == -1:
-        fpart_ln = len(count_fl)
-
     # init model
     mod_l = [init_model(f, K=K, V=V, alpha=alpha, beta=beta,
                         LDA_method=LDA_method)
              for f in count_fl]
-    mod = aggregate_mod(mod_l[:fpart_ln])
 
-    # fit first part
+    # TODO it may be possible to do this without pass nw/nwsum in/out
+    # create initial nw/nwsum
+    nw = np.zeros((K, V), dtype=np.intc)
+    nwsum = np.zeros(K, dtype=np.intc)
+    nw_l = [extract_nw(mod) for mod in mod_l[:fpart_ln]]
+    nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
+
+    # readd global nw/nwsum to model nodes
+    mod_l = [readd_nw(mod, nw=nw, nwsum=nwsum) for mod in mod_l[:fpart_ln]]
+
+    ### fit starting partitions ###
+
+    # fit first set of partitions as one
     for s in range(niters):
 
         # estimate model state for current iteration
-        mod = est_LDA_pass(mod, LDA_method=LDA_method)
-        msg = est_LDA_logger(mod)
-        with open("log.txt", "a") as fd:
-            fd.write(msg + "\n")
+        for mod in mod_l[:fpart_ln]:
+            mod = est_LDA_pass(mod, LDA_method=LDA_method)
+            msg = est_LDA_logger(mod)
+            with open("log.txt", "a") as fd:
+                fd.write(msg + "\n")
 
-    # add theta estimates to mod state and write node output
-    mod = calc_post_theta(mod)
-    write_mod_csv(mod, out_dir)
+        # update global nw/nwsum
+        nw_l = [extract_nw(mod) for mod in mod_l[:fpart_ln]]
+        nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
 
-    # grab aggregates
-    nw = mod["nw"]
-    nwsum = mod["nwsum"]
+        # readd global nw/nwsum to model nodes
+        mod_l = [readd_nw(mod, nw=nw, nwsum=nwsum) for mod in mod_l[:fpart_ln]]
 
-    # add phi and write global output
-    phi = calc_post_phi(nw, nwsum, beta)
-    write_online_global_csv(mod["label"], nw, nwsum, phi, out_dir)
+    # write initial estimates
+    for mod in mod_l[:fpart_ln]:
+        mod = calc_post_theta(mod)
+        write_mod_csv(mod, out_dir)
 
-    # build z list if rolling
-    if rolling:
-        z_l = []
-        offset = 0
-        for m in mod_l:
-            z_l.append(mod["z"][offset:(m["NZ"]+offset)])
-            offset += m["NZ"]
+        # add phi and write global output
+        phi = calc_post_phi(mod["nw"], mod["nwsum"], mod["beta"],
+                            mod["betasum"])
+        write_online_global_csv(mod["label"], phi, out_dir)
+
+    ### fit remaining partitions online ###
 
     # now repeat the process adding new partitions online
     for m_i, mod in enumerate(mod_l[fpart_ln:]):
 
-        # remove prev partition value if rolling
-        if rolling:
-            count_p = mod_l[m_i]["count"]
-            z_p = z_l[m_i]
-            K = mod["K"]
-            V = mod["V"]
-            nw_p = np.zeros(shape=(K, V))
-            for k in range(K):
-                count_pk = count_p[z_p == k,:]
-                nw_p[k,count_pk[:,1]] = count_pk[:,2]
-            nw_p = np.array(nw_p, dtype=np.intc)
-            nwsum_p = nw_p.sum(axis=1)
-            nwsum_p = np.array(nwsum_p, dtype=np.intc)
-
-            nw -= nw_p
-            nwsum -= nwsum_p
-
-        # update nw/nwsum
-        mod["nw"] += nw
-        mod["nwsum"] += nwsum
+        # build prior
+        beta_m = np.ones((mod["K"], mod["V"])) * beta
+        for bstp in range(fpart_ln + m_i):
+            weight = omega ** (bstp + 1)
+            beta_m += mod_l[(fpart_ln+m_i)-(bstp+1)]["nw"] * weight
+            print(beta_m, beta, weight, omega, bstp, m_i,
+                  (fpart_ln + m_i - bstp))
+        betasum = beta_m.sum(axis=1)
+        mod["beta"] = beta_m
+        mod["betasum"] = betasum
+        print(mod["betasum"])
 
         # fit online part
         for s in range(niters_o):
@@ -194,17 +194,90 @@ def oLDA(DTM_dir, out_dir, K, niters=500, niters_o=None, alpha=1.,
         mod = calc_post_theta(mod)
         write_mod_csv(mod, out_dir)
 
-        # grab aggregates
-        nw = mod["nw"]
-        nwsum = mod["nwsum"]
+        # add phi and write global output
+        phi = calc_post_phi(mod["nw"], mod["nwsum"], mod["beta"],
+                            mod["betasum"])
+        write_online_global_csv(mod["label"], phi, out_dir)
+
+
+def opLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
+          LDA_method="full", omega=1., **kwds):
+    """fits a online instance of latent dirichlet allocation (LDA)
+
+    This is a pure implementation which doesn't have a separate
+    first pass
+
+    Parameters
+    ----------
+    DTM_dir : str
+        location where document term matrix is located, should be formatted
+        according to DiSTL DTM format
+    out_dir : str
+        location where topic model will be written
+    K : scalar
+        number of topics to estimate
+    niters : scalar
+        number of iterations for Gibbs samplers
+    alpha : scalar
+        prior for theta
+    beta : scalar
+        starting prior for beta
+    LDA_method : str
+        type of LDA method used for estimation
+
+        full : take gibbs sample for every term
+
+        efficient : take gibbs sample for every unique term
+    omega : scalar
+        weight value for using previous phi fits as prior
+
+    kwds : dict
+        additional key-words to provide for backend coordinator
+    """
+
+    # load DTM metadata/info
+    D, V, count_fl = prep_DTM_info(DTM_dir)
+
+    # prep list to hold prior term counts
+    nw_l = []
+
+    # iteratively fit models
+    for m_i, f in enumerate(count_fl):
+
+        # load model
+        mod = init_model(f, K=K, V=V, alpha=alpha, beta=beta,
+                         LDA_method=LDA_method)
+
+        # build prior
+        beta_m = np.ones((K, V)) * beta
+        for bstp in range(m_i):
+            weight = omega ** (bstp + 1)
+            beta_m += nw_l[m_i-bstp-1] * weight
+        betasum = beta_m.sum(axis=1)
+        mod["beta"] = beta_m
+        mod["betasum"] = betasum
+
+        # fit online part
+        for s in range(niters):
+
+            # estimate model state for current iteration
+            mod = est_LDA_pass(mod, LDA_method=LDA_method)
+            msg = est_LDA_logger(mod)
+            with open("log.txt", "a") as fd:
+                fd.write(msg + "\n")
+
+        # add theta estimates to mod state and write node output
+        mod = calc_post_theta(mod)
+        write_mod_csv(mod, out_dir)
 
         # add phi and write global output
-        phi = calc_post_phi(nw, nwsum, beta)
-        write_online_global_csv(mod["label"], nw, nwsum, phi, out_dir)
+        phi = calc_post_phi(mod["nw"], mod["nwsum"], mod["beta"],
+                            mod["betasum"])
+        write_online_global_csv(mod["label"], phi, out_dir)
 
-        # update z_l if rolling
-        if rolling:
-            z_l.append(mod["z"])
+        # add to nw l
+        nw_l.append(mod["nw"])
+
 
 
 def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
@@ -282,8 +355,9 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
     coord.map(write_mod_csv, mod_l, out_dir=out_dir, gather=True)
 
     # add phi and write global output
+    # TODO properly handle vectorized beta here
     phi = calc_post_phi(nw, nwsum, beta)
-    write_global_csv(nw, nwsum, phi, out_dir)
+    write_global_csv(phi, out_dir)
 
 
 ##############################################################################
@@ -389,9 +463,6 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method):
     # set global values
     mod["K"] = K
     mod["V"] = V
-    mod["alpha"] = alpha
-    mod["beta"] = beta
-
     # extract label
     label = os.path.basename(DTM_shard_fname)
     mod["label"] = label.replace(".csv", "").replace("count_", "")
@@ -410,11 +481,17 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method):
     mod["D"] = D
     mod["NZ"] = NZ
 
+    # set priors
+    mod["alpha"] = np.ones((D, K)) * alpha
+    mod["alphasum"] = mod["alpha"].sum(axis=1)
+    mod["beta"] = np.ones((K, V)) * beta
+    mod["betasum"] = mod["beta"].sum(axis=1)
+
     # init z
     if LDA_method == "full":
         N = np.sum(count[:,2])
         z = np.random.randint(0, high=K, size=N, dtype=np.intc)
-    elif LDA_method == "efficient" or LDA_method == "kernel":
+    elif LDA_method == "efficient":
         z = np.random.randint(0, high=K, size=NZ, dtype=np.intc)
     else:
         raise ValueError("Unknown LDA_method: %s" % LDA_method)
@@ -431,36 +508,28 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method):
         dzdf = pd.DataFrame({"d": np.repeat(count[:,0], count[:,2]), "z": z})
         dzdf["count"] = 1
         dzarr = dzdf.groupby(["d", "z"], as_index=False).sum().values
-    elif LDA_method == "efficient" or LDA_method == "kernel":
+    elif LDA_method == "efficient":
         dzdf = pd.DataFrame({"d": count[:,0], "z": z, "count": count[:,2]})
         dzarr = dzdf.groupby(["d", "z"], as_index=False).sum().values
     nd = np.zeros(shape=(D, K))
     nd[dzarr[:,0], dzarr[:,1]] = dzarr[:,2]
     ndsum = nd.sum(axis=1)
-    if LDA_method == "kernel":
-        mod["nd"] = np.array(nd)
-        mod["ndsum"] = np.array(ndsum)
-    else:
-        mod["nd"] = np.array(nd, dtype=np.intc)
-        mod["ndsum"] = np.array(ndsum, dtype=np.intc)
+    mod["nd"] = np.array(nd, dtype=np.intc)
+    mod["ndsum"] = np.array(ndsum, dtype=np.intc)
 
     # generate nw/nwsum
     if LDA_method == "full":
         vzdf = pd.DataFrame({"v": np.repeat(count[:,1], count[:,2]), "z": z})
         vzdf["count"] = 1
         vzarr = vzdf.groupby(["z", "v"], as_index=False).sum().values
-    elif LDA_method == "efficient" or LDA_method == "kernel":
+    elif LDA_method == "efficient":
         vzdf = pd.DataFrame({"v": count[:,1], "z": z, "count": count[:,2]})
         vzarr = vzdf.groupby(["z", "v"], as_index=False).sum().values
     nw = np.zeros(shape=(K, V))
     nw[vzarr[:,0], vzarr[:,1]] = vzarr[:,2]
     nwsum = nw.sum(axis=1)
-    if LDA_method == "kernel":
-        mod["nw"] = np.array(nw)
-        mod["nwsum"] = np.array(nwsum)
-    else:
-        mod["nw"] = np.array(nw, dtype=np.intc)
-        mod["nwsum"] = np.array(nwsum, dtype=np.intc)
+    mod["nw"] = np.array(nw, dtype=np.intc)
+    mod["nwsum"] = np.array(nwsum, dtype=np.intc)
 
     return mod
 
@@ -476,56 +545,43 @@ def write_mod_csv(mod, out_dir):
         location where output will be written
     """
 
-#    var_l = ["nd", "ndsum", "theta", "z_trace"]
-    var_l = ["nd", "z_trace"]
+    var_l = ["theta", "z", "z_trace"]
     for var in var_l:
         np.savetxt(os.path.join(out_dir, "%s_%s.csv" % (var, mod["label"])),
                    mod[var], delimiter=",")
 
 
-def write_global_csv(nw, nwsum, phi, out_dir):
+def write_global_csv(phi, out_dir):
     """writes the global estimates to the specified out_dir
 
     Parameters
     ----------
-    nw : numpy array
-        global values for nw
-    nwsum : numpy array
-        global values for nwsum
     phi : numpy array
         global values for phi
     out_dir : str
         location where output will be written
     """
 
-    np.savetxt(os.path.join(out_dir, "nw.csv"), nw, delimiter=",")
-#    np.savetxt(os.path.join(out_dir, "nwsum.csv"), nwsum, delimiter=",")
-#    np.savetxt(os.path.join(out_dir, "phi.csv"), phi, delimiter=",")
+    np.savetxt(os.path.join(out_dir, "phi.csv"), phi, delimiter=",")
 
 
-def write_online_global_csv(label, nw, nwsum, phi, out_dir):
+def write_online_global_csv(label, phi, out_dir):
     """writes the global estimates to the specified out_dir for oLDA
 
     Parameters
     ----------
     label : str
         label for current online partition
-    nw : numpy array
-        global values for nw
-    nwsum : numpy array
-        global values for nwsum
     phi : numpy array
         global values for phi
+    z : numpy array
+        global values for z
     out_dir : str
         location where output will be written
     """
 
-    np.savetxt(os.path.join(out_dir, "nw_%s.csv" % label),
-               nw, delimiter=",")
-#    np.savetxt(os.path.join(out_dir, "nwsum_%s.csv" % label),
-#               nwsum, delimiter=",")
-#    np.savetxt(os.path.join(out_dir, "phi_%s.csv" % label),
-#               phi, delimiter=",")
+    np.savetxt(os.path.join(out_dir, "phi_%s.csv" % label),
+               phi, delimiter=",")
 
 
 ##############################################################################
@@ -559,8 +615,6 @@ def est_LDA_pass(mod, LDA_method="full"):
         LDA_pass(**mod)
     elif LDA_method == "efficient":
         eLDA_pass(**mod)
-#    elif LDA_method == "kernel":
-#        svLDA_pass(**mod)
     else:
         raise ValueError("Unknown LDA_method: %s" % LDA_method)
 
@@ -599,13 +653,15 @@ def calc_post_theta(mod):
         current estimates for document-topic proportions
     """
 
-    mod["theta"] = ((np.array(mod["nd"]).T + mod["alpha"]) /
-                    (np.array(mod["ndsum"]) + mod["K"] * mod["alpha"])).T
+    # TODO this and phi are foobared by vectorizing alpha/beta
+
+    mod["theta"] = ((np.array(mod["nd"]) + mod["alpha"]).T /
+                    (np.array(mod["ndsum"]) + mod["alphasum"])).T
 
     return mod
 
 
-def calc_post_phi(nw, nwsum, beta):
+def calc_post_phi(nw, nwsum, beta, betasum):
     """calculates the posterior estimate for phi
 
     Parameters
@@ -614,8 +670,10 @@ def calc_post_phi(nw, nwsum, beta):
         current global nw matrix
     nwsum : numpy array
         current global nwsum vector
-    beta : scalar
-        prior for phi
+    beta : numpy array
+        matrix prior for phi
+    betasum : numpy array
+        sum of beta over V
 
     Returns
     -------
@@ -625,7 +683,7 @@ def calc_post_phi(nw, nwsum, beta):
 
     K, V = nw.shape
 
-    phi = ((nw.T + beta) / (nwsum + V * beta)).T
+    phi = ((nw.T + beta.T) / (nwsum + betasum)).T
 
     return phi
 
@@ -695,6 +753,8 @@ def aggregate_mod(mod_l):
     mod["V"] = mod_l[0]["V"]
     mod["alpha"] = mod_l[0]["alpha"]
     mod["beta"] = mod_l[0]["beta"]
+    mod["alphasum"] = mod_l[0]["alphasum"]
+    mod["betasum"] = mod_l[0]["betasum"]
     mod["z_trace"] = mod_l[0]["z_trace"]
 
     # build joined vars

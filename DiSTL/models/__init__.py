@@ -1,1 +1,1 @@
-from .LDA import LDA, dLDA, oLDA
+from .LDA import LDA, dLDA, oLDA, opLDA

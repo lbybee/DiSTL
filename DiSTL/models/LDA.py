@@ -139,7 +139,8 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
 
 
 
-def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1., **kwds):
+def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
+         LDA_method="efficient_b", **kwds):
     """fits a distributed instance of latent dirichlet allocation (LDA)
 
     Parameters

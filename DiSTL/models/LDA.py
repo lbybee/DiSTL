@@ -1,4 +1,4 @@
-from LDA_c_methods import LDA_pass, eLDA_pass
+from LDA_c_methods import LDA_pass, eLDA_pass, eLDA_pass_b
 from coordinator import Coordinator
 from datetime import datetime
 import pandas as pd
@@ -12,7 +12,7 @@ import os
 ##############################################################################
 
 def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
-        LDA_method="full", **kwds):
+        LDA_method="efficient_b", **kwds):
     """fits a sequential instance of latent dirichlet allocation (LDA)
 
     Parameters
@@ -70,7 +70,7 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
 
 
 def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
-          LDA_method="full", omega=1., **kwds):
+          LDA_method="efficient_b", omega=1., **kwds):
     """fits a online instance of latent dirichlet allocation (LDA)
 
     Parameters
@@ -343,37 +343,46 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
     mod["NZ"] = NZ
 
     # handle nw based prior
-    if nw_l is not None:
-        N_m = mod["count"][:,2].sum()
-        m_i = len(nw_l)
-        beta_m = np.ones((K, V)) * beta
-        for bstp in range(m_i):
-            weight = omega ** (bstp + 1)
-            nw_b = nw_l[m_i-bstp-1]
-            N_b = nw_b.sum()
-            beta_m += (nw_b * weight / N_b) * N_m
-        mod["beta"] = beta_m
-        mod["betasum"] = mod["beta"].sum(axis=1)
-    else:
-        mod["beta"] = np.ones((K, V)) * beta
-        mod["betasum"] = mod["beta"].sum(axis=1)
+    if LDA_method != "efficient_b":
+        if nw_l is not None:
+            N_m = mod["count"][:,2].sum()
+            m_i = len(nw_l)
+            beta_m = np.ones((K, V)) * beta
+            for bstp in range(m_i):
+                weight = omega ** (bstp + 1)
+                nw_b = nw_l[m_i-bstp-1]
+                N_b = nw_b.sum()
+                beta_m += (nw_b * weight / N_b) * N_m
+            mod["beta"] = beta_m
+            mod["betasum"] = mod["beta"].sum(axis=1)
+        else:
+            mod["beta"] = np.ones((K, V)) * beta
+            mod["betasum"] = mod["beta"].sum(axis=1)
 
-    # set theta prior
-    mod["alpha"] = np.ones((D, K)) * alpha
-    mod["alphasum"] = mod["alpha"].sum(axis=1)
+        # set theta prior
+        mod["alpha"] = np.ones((D, K)) * alpha
+        mod["alphasum"] = mod["alpha"].sum(axis=1)
+
+    else:
+        mod["beta"] = beta
+        mod["alpha"] = alpha
+
 
     # init z
     # TODO currently full estimation doesn't support zprior
     # p(z_i=k|w_i) = p(w_i|z_i=k)p(z_i=k)/p(w_i)
-    zprior = (mod["beta"] / mod["beta"].sum(axis=0)).T
     if LDA_method == "full":
         N = np.sum(count[:,2])
         z = np.random.randint(0, high=K, size=N, dtype=np.intc)
     elif LDA_method == "efficient":
+        zprior = (mod["beta"] / mod["beta"].sum(axis=0)).T
         zprob = zprior[count[:,1]]
         u = np.random.rand(NZ, 1)
         z = (u < zprob.cumsum(axis=1)).argmax(axis=1)
         z = np.array(z, dtype=np.intc)
+    elif LDA_method == "efficient_b":
+        NZ = count.shape[0]
+        z = np.random.randint(0, high=K, size=NZ, dtype=np.intc)
     else:
         raise ValueError("Unknown LDA_method: %s" % LDA_method)
     mod["z"] = z
@@ -389,7 +398,7 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
         dzdf = pd.DataFrame({"d": np.repeat(count[:,0], count[:,2]), "z": z})
         dzdf["count"] = 1
         dzarr = dzdf.groupby(["d", "z"], as_index=False).sum().values
-    elif LDA_method == "efficient":
+    elif LDA_method == "efficient" or LDA_method == "efficient_b":
         dzdf = pd.DataFrame({"d": count[:,0], "z": z, "count": count[:,2]})
         dzarr = dzdf.groupby(["d", "z"], as_index=False).sum().values
     nd = np.zeros(shape=(D, K))
@@ -403,7 +412,7 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
         vzdf = pd.DataFrame({"v": np.repeat(count[:,1], count[:,2]), "z": z})
         vzdf["count"] = 1
         vzarr = vzdf.groupby(["z", "v"], as_index=False).sum().values
-    elif LDA_method == "efficient":
+    elif LDA_method == "efficient" or LDA_method == "efficient_b":
         vzdf = pd.DataFrame({"v": count[:,1], "z": z, "count": count[:,2]})
         vzarr = vzdf.groupby(["z", "v"], as_index=False).sum().values
     nw = np.zeros(shape=(K, V))
@@ -495,6 +504,8 @@ def est_LDA_pass(mod, LDA_method="full"):
         LDA_pass(**mod)
     elif LDA_method == "efficient":
         eLDA_pass(**mod)
+    elif LDA_method == "efficient_b":
+        eLDA_pass_b(**mod)
     else:
         raise ValueError("Unknown LDA_method: %s" % LDA_method)
 

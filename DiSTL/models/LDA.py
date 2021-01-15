@@ -368,7 +368,6 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
         mod["beta"] = beta
         mod["alpha"] = alpha
 
-
     # init z
     # TODO currently full estimation doesn't support zprior
     # p(z_i=k|w_i) = p(w_i|z_i=k)p(z_i=k)/p(w_i)
@@ -520,7 +519,8 @@ def est_LDA_logger(mod):
 
     lab = mod["label"]
     zt = mod["z_trace"]
-    msg = "label: {0} iter: {1} trace: {2}".format(lab, len(zt) - 1, zt[-1])
+    t0 = datetime.now()
+    msg = "label: {0} time: {1} iter: {2} trace: {3}".format(lab, t0, len(zt) - 1, zt[-1])
     return msg
 
 

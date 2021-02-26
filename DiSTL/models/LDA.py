@@ -436,7 +436,7 @@ def write_mod_csv(mod, out_dir):
     """
 
 #    var_l = ["theta", "z", "z_trace"]
-    var_l = ["nd", "z_trace"]
+    var_l = ["nd", "z", "z_trace"]
     for var in var_l:
         np.savetxt(os.path.join(out_dir, "%s_%s.csv" % (var, mod["label"])),
                    mod[var], delimiter=",")

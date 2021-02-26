@@ -7,12 +7,14 @@ import glob
 import sys
 import os
 
+# TODO currently only base LDA supports aggregate values
+
 ##############################################################################
 #                           Control/main functions                           #
 ##############################################################################
 
 def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
-        LDA_method="efficient_b", **kwds):
+        LDA_method="efficient_b", fin_agg_iter=0, **kwds):
     """fits a sequential instance of latent dirichlet allocation (LDA)
 
     Parameters
@@ -37,6 +39,8 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
 
         efficient : take gibbs sample for every unique term
 
+    fin_agg_iter : scalar
+        number of iterations at end of path to aggregate
     kwds : dict
         additional key-words to provide for backend coordinator
     """
@@ -46,7 +50,7 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
 
     # init model
     mod_l = [init_model(f, K=K, V=V, alpha=alpha, beta=beta,
-                        LDA_method=LDA_method)
+                        LDA_method=LDA_method, fin_agg_iter=fin_agg_iter)
              for f in count_fl]
     if len(mod_l) > 1:
         mod = aggregate_mod(mod_l)
@@ -56,8 +60,14 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     # fit iterations
     for s in range(niters):
 
+        # calc finagg
+        if fin_agg_iter > 0:
+            finagg = (s >= (niters - fin_agg_iter))
+        else:
+            finagg = False
+
         # estimate model state for current iteration
-        mod = est_LDA_pass(mod, LDA_method=LDA_method)
+        mod = est_LDA_pass(mod, LDA_method=LDA_method, finagg=finagg)
         msg = est_LDA_logger(mod)
         with open("log.txt", "a") as fd:
             fd.write(msg + "\n")
@@ -66,7 +76,9 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     write_mod_csv(mod, out_dir)
 
     # add phi and write global output
-    write_global_csv(mod["nw"], out_dir)
+    write_global_csv(mod["nw"], out_dir, "nw")
+    if "nwfinagg" in mod:
+        write_global_csv(mod["nwfinagg"], out_dir, "nwfinagg")
 
 
 def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
@@ -214,7 +226,7 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     coord.map(write_mod_csv, mod_l, out_dir=out_dir, gather=True)
 
     # add phi and write global output
-    write_global_csv(nw, out_dir)
+    write_global_csv(nw, out_dir, "nw")
 
 
 ##############################################################################
@@ -255,7 +267,7 @@ def prep_DTM_info(DTM_dir):
 
 
 def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
-               nw_l=None, omega=None):
+               nw_l=None, omega=None, fin_agg_iter=0):
     """loads a count chunk onto a specified client node
 
     Parameters
@@ -276,6 +288,8 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
         list of previously fit phi count matrices
     omega : scalar or None
         if provided this corresponds to weight for prior data
+    fin_agg_iter : scalar
+        number of iterations from end of path to aggregate (sum) up
 
     Returns
     -------
@@ -421,6 +435,11 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
     mod["nw"] = np.array(nw, dtype=np.intc)
     mod["nwsum"] = np.array(nwsum, dtype=np.intc)
 
+    # add aggregate array if desired
+    if fin_agg_iter > 0:
+        mod["nwfinagg"] = np.zeros(mod["nw"].shape, dtype=np.intc)
+        mod["ndfinagg"] = np.zeros(mod["nd"].shape, dtype=np.intc)
+
     return mod
 
 
@@ -441,8 +460,13 @@ def write_mod_csv(mod, out_dir):
         np.savetxt(os.path.join(out_dir, "%s_%s.csv" % (var, mod["label"])),
                    mod[var], delimiter=",")
 
+    if "ndfinagg" in mod:
+        np.savetxt(os.path.join(out_dir, "%s_%s.csv" %
+                                ("ndfinagg", mod["label"])),
+                   mod["ndfinagg"], delimiter=",")
 
-def write_global_csv(nw, out_dir):
+
+def write_global_csv(nw, out_dir, lab):
     """writes the global estimates to the specified out_dir
 
     Parameters
@@ -453,7 +477,7 @@ def write_global_csv(nw, out_dir):
         location where output will be written
     """
 
-    np.savetxt(os.path.join(out_dir, "nw.csv"), nw, delimiter=",")
+    np.savetxt(os.path.join(out_dir, "%s.csv" % lab), nw, delimiter=",")
 
 
 def write_online_global_csv(label, nw, out_dir):
@@ -477,15 +501,19 @@ def write_online_global_csv(label, nw, out_dir):
 #                            Pure/calc functions                             #
 ##############################################################################
 
-def est_LDA_pass(mod, LDA_method="full"):
+def est_LDA_pass(mod, LDA_method="full", finagg=False):
     """wrapper around the cython LDA_pass code to manage mod dict
 
     Parameters
     ----------
     mod : dict
         dictionary corresponding to model state for node
+    s : scalar
+        current iteration
     LDA_method : str
         type of LDA method used for estimation
+    finagg : bool
+        whether to aggregate the current fits into finagg
 
     Returns
     -------
@@ -510,6 +538,10 @@ def est_LDA_pass(mod, LDA_method="full"):
         raise ValueError("Unknown LDA_method: %s" % LDA_method)
 
     mod["z_trace"] = np.append(mod["z_trace"], np.sum(mod["z"] != z_prev))
+
+    if finagg:
+        mod["ndfinagg"] += mod["nd"]
+        mod["nwfinagg"] += mod["nw"]
 
     return mod
 

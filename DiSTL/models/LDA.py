@@ -1,6 +1,9 @@
+from LDA_c_methods import LDA_pass_fphi, eLDA_pass_fphi, eLDA_pass_b_fphi
 from LDA_c_methods import LDA_pass, eLDA_pass, eLDA_pass_b
+from joblib import Parallel, delayed
 from coordinator import Coordinator
 from datetime import datetime
+from tqdm import tqdm
 import pandas as pd
 import numpy as np
 import glob
@@ -13,8 +16,9 @@ import os
 #                           Control/main functions                           #
 ##############################################################################
 
-def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
-        LDA_method="efficient_b", fin_agg_iter=0, **kwds):
+def LDA(DTM_dir, out_dir, K, part_l=None, niters=500, alpha=1., beta=1.,
+        LDA_method="efficient_b", fin_agg_iter=0, log_file="log.txt",
+        nw_f=None, **kwds):
     """fits a sequential instance of latent dirichlet allocation (LDA)
 
     Parameters
@@ -26,6 +30,8 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         location where topic model will be written
     K : scalar
         number of topics to estimate
+    part_l : list or None
+        if provided, used as input to constrain list of files
     niters : scalar
         number of iterations for Gibbs samplers
     alpha : scalar
@@ -41,12 +47,20 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
 
     fin_agg_iter : scalar
         number of iterations at end of path to aggregate
+    log_file : str
+        location where log should be written
+    nw_f : str or None
+        possible location of pre-specified phi
     kwds : dict
         additional key-words to provide for backend coordinator
     """
 
+    # form dir based log if desired
+    if log_file == "out_dir":
+        log_file = os.path.basename(out_dir) + ".txt"
+
     # load DTM metadata/info
-    D, V, count_fl = prep_DTM_info(DTM_dir)
+    D, V, count_fl = prep_DTM_info(DTM_dir, part_l)
 
     # init model
     mod_l = [init_model(f, K=K, V=V, alpha=alpha, beta=beta,
@@ -56,6 +70,8 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         mod = aggregate_mod(mod_l)
     else:
         mod = mod_l[0]
+    if nw_f is not None:
+        mod = load_nw(mod, nw_f)
 
     # fit iterations
     for s in range(niters):
@@ -67,9 +83,12 @@ def LDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
             finagg = False
 
         # estimate model state for current iteration
-        mod = est_LDA_pass(mod, LDA_method=LDA_method, finagg=finagg)
+        if nw_f is None:
+            mod = est_LDA_pass(mod, LDA_method=LDA_method, finagg=finagg)
+        else:
+            mod = est_LDA_pass_fphi(mod, LDA_method=LDA_method, finagg=finagg)
         msg = est_LDA_logger(mod)
-        with open("log.txt", "a") as fd:
+        with open(log_file, "a") as fd:
             fd.write(msg + "\n")
 
     # add theta estimates to mod state and write node output
@@ -152,7 +171,7 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
 
 
 def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
-         LDA_method="efficient_b", **kwds):
+         LDA_method="efficient_b", nw_f=None, **kwds):
     """fits a distributed instance of latent dirichlet allocation (LDA)
 
     Parameters
@@ -177,6 +196,8 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
 
         efficient : take gibbs sample for every unique term
 
+    nw_f : str or None
+        possible location of pre-specified phi
     kwds : dict
         additional key-words to provide for backend coordinator
     """
@@ -190,28 +211,12 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     # init model
     mod_l = coord.map(init_model, count_fl, K=K, V=V,
                       alpha=alpha, beta=beta, LDA_method=LDA_method)
-
-    # create initial nw/nwsum
-    nw = np.zeros((K, V), dtype=np.intc)
-    nwsum = np.zeros(K, dtype=np.intc)
-    nw_l = coord.map(extract_nw, mod_l, gather=True)
-    nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
-
-    # scatter global nw/nwsum
-    nw_f = coord.scatter(nw, broadcast=True)
-    nwsum_f = coord.scatter(nwsum, broadcast=True)
-
-    # readd global nw/nwsum to model nodes
-    mod_l = coord.map(readd_nw, mod_l, nw=nw_f, nwsum=nwsum_f)
-
-    # fit iterations
-    for s in range(niters):
-
-        # estimate model state for current iteration
-        mod_l = coord.map(est_LDA_pass, mod_l, LDA_method=LDA_method,
-                          pure=False, log=True, func_logger=est_LDA_logger)
-
-        # update global nw/nwsum
+    if nw_f is not None:
+        mod_l = coord.map(load_nw, mod_l, nw_f=nw_f)
+    else:
+        # create initial nw/nwsum
+        nw = np.zeros((K, V), dtype=np.intc)
+        nwsum = np.zeros(K, dtype=np.intc)
         nw_l = coord.map(extract_nw, mod_l, gather=True)
         nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
 
@@ -222,24 +227,157 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         # readd global nw/nwsum to model nodes
         mod_l = coord.map(readd_nw, mod_l, nw=nw_f, nwsum=nwsum_f)
 
+    # fit iterations
+    for s in range(niters):
+
+        # estimate model state for current iteration
+        if nw_f is None:
+            mod_l = coord.map(est_LDA_pass, mod_l, LDA_method=LDA_method,
+                              pure=False, log=True, func_logger=est_LDA_logger)
+        else:
+            mod_l = coord.map(est_LDA_pass_fphi, mod_l, LDA_method=LDA_method,
+                              pure=False, log=True, func_logger=est_LDA_logger)
+
+        # only update nw if prespecified phi not provided
+        if nw_f is None:
+            # update global nw/nwsum
+            nw_l = coord.map(extract_nw, mod_l, gather=True)
+            nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
+
+            # scatter global nw/nwsum
+            nw_f = coord.scatter(nw, broadcast=True)
+            nwsum_f = coord.scatter(nwsum, broadcast=True)
+
+            # readd global nw/nwsum to model nodes
+            mod_l = coord.map(readd_nw, mod_l, nw=nw_f, nwsum=nwsum_f)
+
     # write node output
     coord.map(write_mod_csv, mod_l, out_dir=out_dir, gather=True)
 
+    # update global nw/nwsum
+    nw_l = coord.map(extract_nw, mod_l, gather=True)
+    nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
+
     # add phi and write global output
     write_global_csv(nw, out_dir, "nw")
+
+
+def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
+         LDA_method="efficient_b", nw_f=None, n_jobs=12,
+         write_int=False, **kwds):
+    """fits a distributed instance of latent dirichlet allocation (LDA)
+
+    Uses joblib instead of more complicated methods
+
+    Parameters
+    ----------
+    DTM_dir : str
+        location where document term matrix is located, should be formatted
+        according to DiSTL DTM format
+    out_dir : str
+        location where topic model will be written
+    K : scalar
+        number of topics to estimate
+    niters : scalar
+        number of iterations for Gibbs samplers
+    alpha : scalar
+        prior for theta
+    beta : scalar
+        prior for beta
+    LDA_method : str
+        type of LDA method used for estimation
+
+        full : take gibbs sample for every term
+
+        efficient : take gibbs sample for every unique term
+
+    nw_f : str or None
+        possible location of pre-specified phi
+    kwds : dict
+        additional key-words to provide for backend coordinator
+    """
+
+    # load DTM metadata/info
+    D, V, count_fl = prep_DTM_info(DTM_dir)
+
+    # init model
+    mod_l = Parallel(n_jobs=n_jobs, max_nbytes=None)(
+                delayed(init_model)(cf, K=K, V=V, alpha=alpha,
+                                    beta=beta, LDA_method=LDA_method)
+                for cf in tqdm(count_fl))
+    if nw_f is not None:
+        # load existing nw/nwsum
+        mod_l = Parallel(n_jobs=n_jobs, max_nbytes=None)(
+                    delayed(load_nw)(mod, nw_f)
+                    for mod in tqdm(mod_l))
+    else:
+        # create initial nw/nwsum
+        nw = np.zeros((K, V), dtype=np.intc)
+        nwsum = np.zeros(K, dtype=np.intc)
+        nw_l = [extract_nw(mod) for mod in mod_l]
+        nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
+        mod_l = [readd_nw(mod, nw, nwsum) for mod in mod_l]
+
+    # fit iterations
+    for s in tqdm(range(niters)):
+
+        # estimate model state for current iteration
+        if nw_f is None:
+            mod_l = Parallel(n_jobs=n_jobs, max_nbytes=None)(
+                        delayed(est_LDA_pass)(mod, LDA_method=LDA_method)
+                        for mod in tqdm(mod_l, leave=False))
+        else:
+            mod_l = Parallel(n_jobs=n_jobs, max_nbytes=None)(
+                        delayed(est_LDA_pass_fphi)(mod, LDA_method=LDA_method)
+                        for mod in tqdm(mod_l, leave=False))
+
+        # only update nw if prespecified nw not provided
+        if nw_f is None:
+            # update global nw/nwsum
+            nw_l = [extract_nw(mod) for mod in mod_l]
+            nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
+            mod_l = [readd_nw(mod, nw, nwsum) for mod in mod_l]
+
+        msg = est_LDA_logger(mod_l[0])
+        with open("log.txt", "a") as fd:
+            fd.write(msg + "\n")
+
+        if write_int:
+            # write node output
+            Parallel(n_jobs=n_jobs, max_nbytes=None)(
+                    delayed(write_mod_csv)(mod, out_dir)
+                    for mod in mod_l)
+
+            # add phi and write global output
+            write_global_csv(nw, out_dir, "nw")
+
+    # write node output
+    Parallel(n_jobs=n_jobs, max_nbytes=None)(
+            delayed(write_mod_csv)(mod, out_dir)
+            for mod in mod_l)
+
+    # update global nw/nwsum
+    nw_l = [extract_nw(mod) for mod in mod_l]
+    nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
+
+    # add phi and write global output
+    write_global_csv(nw, out_dir, "nw")
+
 
 
 ##############################################################################
 #                           State/IO/gen functions                           #
 ##############################################################################
 
-def prep_DTM_info(DTM_dir):
+def prep_DTM_info(DTM_dir, part_l=None):
     """extracts the DTM dimensions (D, V) as well as a list of count files
 
     Parameters
     ----------
     DTM_dir : str
         location of DTM files
+    part_l : list or None
+        if provided, used as input to constrain list of files
 
     Returns
     -------
@@ -253,15 +391,24 @@ def prep_DTM_info(DTM_dir):
 
     # get dimensions
     # TODO handle doc/term more cleanly
-    D_l = [len(open(os.path.join(DTM_dir, d), "r").readlines())
-           for d in os.listdir(DTM_dir) if d[:3] == "doc"]
+    if part_l is None:
+        D_l = [len(open(os.path.join(DTM_dir, d), "r").readlines())
+               for d in os.listdir(DTM_dir) if d[:3] == "doc"]
+    else:
+        D_l = [len(open(os.path.join(DTM_dir, "doc_%s.csv" % d),
+                        "r").readlines())
+               for d in part_l]
     D = sum(D_l) - len(D_l)
     V_l = [len(open(os.path.join(DTM_dir, v), "r").readlines())
            for v in os.listdir(DTM_dir) if v[:4] == "term"]
     V = sum(V_l) - len(V_l)
 
     # count files
-    count_fl = sorted(glob.glob(os.path.join(DTM_dir, "count*.csv")))
+    if part_l is None:
+        count_fl = sorted(glob.glob(os.path.join(DTM_dir, "count*.csv")))
+    else:
+        count_fl = sorted([os.path.join(DTM_dir, "count_%s.csv" % d)
+                           for d in part_l])
 
     return D, V, count_fl
 
@@ -443,6 +590,16 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
     return mod
 
 
+def load_nw(mod, nw_f):
+    """load phi matrix and add to mod"""
+
+#    nw = np.loadtxt(nw_f, delimiter=",")
+#    mod["nw"] = np.array(nw, dtype=np.intc)
+#    nwsum = nw.sum(axis=1)
+#    mod["nwsum"] = np.array(nwsum, dtype=np.intc)
+    return mod
+
+
 def write_mod_csv(mod, out_dir):
     """writes all the model estimates to the specified out_dir
 
@@ -534,6 +691,51 @@ def est_LDA_pass(mod, LDA_method="full", finagg=False):
         eLDA_pass(**mod)
     elif LDA_method == "efficient_b":
         eLDA_pass_b(**mod)
+    else:
+        raise ValueError("Unknown LDA_method: %s" % LDA_method)
+
+    mod["z_trace"] = np.append(mod["z_trace"], np.sum(mod["z"] != z_prev))
+
+    if finagg:
+        mod["ndfinagg"] += mod["nd"]
+        mod["nwfinagg"] += mod["nw"]
+
+    return mod
+
+
+def est_LDA_pass_fphi(mod, LDA_method="full", finagg=False):
+    """wrapper around the cython LDA_pass code to manage mod dict
+
+    Parameters
+    ----------
+    mod : dict
+        dictionary corresponding to model state for node
+    s : scalar
+        current iteration
+    LDA_method : str
+        type of LDA method used for estimation
+    finagg : bool
+        whether to aggregate the current fits into finagg
+
+    Returns
+    -------
+    mod : dict
+        updated dictionary corresponding to new model state for node
+
+    Notes
+    -----
+    The cython code in LDA_pass updates the model values in-place, this
+    is the reason we don't need to return anything from LDA_pass
+    """
+
+    z_prev = mod["z"].copy()
+
+    if LDA_method == "full":
+        LDA_pass_fphi(**mod)
+    elif LDA_method == "efficient":
+        eLDA_pass_fphi(**mod)
+    elif LDA_method == "efficient_b":
+        eLDA_pass_b_fphi(**mod)
     else:
         raise ValueError("Unknown LDA_method: %s" % LDA_method)
 

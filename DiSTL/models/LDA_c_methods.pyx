@@ -66,6 +66,8 @@ def LDA_pass(int[:,:] count, int[:] z, int[:,:] nd, int[:] ndsum,
              double[:,:] beta, double[:,:] alpha, **kwds):
     """runs one pass of LDA over the provided text count
 
+    Allows for heterogeneous priors
+
     Parameters
     ----------
     count : numpy array (NZ x 3)
@@ -140,6 +142,10 @@ def eLDA_pass(int[:,:] count, int[:] z, int[:,:] nd, int[:] ndsum,
               double[:,:] beta, double[:,:] alpha, **kwds):
     """runs one pass of LDA over the provided text count
 
+    Uses efficient estimation procedure
+
+    Allows for heterogeneous priors
+
     Parameters
     ----------
     count : numpy array (NZ x 3)
@@ -206,6 +212,8 @@ def LDA_pass_b(int[:,:] count, int[:] z, int[:,:] nd, int[:] ndsum,
                int[:,:] nw, int[:] nwsum, int NZ, int D, int V, int K,
                double alpha, double beta, **kwds):
     """runs one pass of LDA over the provided text count
+
+    Uses a constant value for all priors
 
     Parameters
     ----------
@@ -279,6 +287,10 @@ def eLDA_pass_b(int[:,:] count, int[:] z, int[:,:] nd, int[:] ndsum,
                 double alpha, double beta, **kwds):
     """runs one pass of LDA over the provided text count
 
+    Uses efficient estimation procedure
+
+    Uses a constant value for all priors
+
     Parameters
     ----------
     count : numpy array (NZ x 3)
@@ -340,3 +352,285 @@ def eLDA_pass_b(int[:,:] count, int[:] z, int[:,:] nd, int[:] ndsum,
         z[dv] = topic
 
 
+def LDA_pass_fphi(int[:,:] count, int[:] z, int[:,:] nd, int[:] ndsum,
+                  int[:,:] nw, int[:] nwsum, int NZ, int D, int V, int K,
+                  double[:] betasum, double[:] alphasum,
+                  double[:,:] beta, double[:,:] alpha, **kwds):
+    """runs one pass of LDA over the provided text count
+
+    Uses pre-specified phi instead of estimating
+
+    Allows for heterogeneous priors
+
+    Parameters
+    ----------
+    count : numpy array (NZ x 3)
+        triplet representation for term counts for current node
+    z : numpy array (N x 1)
+        topic assignments for each term
+    nd : numpy array (D x K)
+        weighted (by term count) topic assigments for each document
+    ndsum : numpy array (D x 1)
+        term counts in document d
+    nw : numpy array (K x V)
+        weighted (by term count) topic assigments for each term
+    nwsum : numpy array (K x 1)
+        total term counts assigned to topic K
+    z_trace : numpy array (0:niters)
+        contains the diff for z at each iteration
+    NZ : scalar
+        number of non-zero elements in counts
+    D : scalar
+        number of documents
+    V : scalar
+        number of terms
+    K : scalar
+        number of topics
+    betasum : numpy array
+        sum of beta prior over V
+    alphasum : numpy array
+        sum of alpha prior over K
+    beta : numpy array
+        prior for phi
+    alpha : numpy array
+        prior for theta
+    """
+
+    cdef int dv, d, v, count_dv, topic, k
+    cdef double[:] p = np.zeros(K)
+
+    cdef ind = 0
+
+    for dv in range(NZ):
+
+        d = count[dv,0]
+        v = count[dv,1]
+        count_dv = count[dv,2]
+
+        for n in range(count_dv):
+
+            topic = z[ind]
+
+            nd[d,topic] -= 1
+            ndsum[d] -= 1
+
+            topic = z_sample(nd[d,:], ndsum[d], nw[:,v], nwsum, K,
+                             alphasum[d], betasum, alpha[d,:],
+                             beta[:,v], p)
+
+            nd[d,topic] += 1
+            ndsum[d] += 1
+
+            z[ind] = topic
+
+            ind += 1
+
+
+def eLDA_pass_fphi(int[:,:] count, int[:] z, int[:,:] nd, int[:] ndsum,
+                   int[:,:] nw, int[:] nwsum, int NZ, int D, int V, int K,
+                   double[:] betasum, double[:] alphasum,
+                   double[:,:] beta, double[:,:] alpha, **kwds):
+    """runs one pass of LDA over the provided text count
+
+    Uses efficient estimation procedure
+
+    Uses pre-specified phi instead of estimating
+
+    Allows for heterogeneous priors
+
+    Parameters
+    ----------
+    count : numpy array (NZ x 3)
+        triplet representation for term counts for current node
+    z : numpy array (NZ x 1)
+        topic assignments for each term
+    nd : numpy array (D x K)
+        weighted (by term count) topic assigments for each document
+    ndsum : numpy array (D x 1)
+        term counts in document d
+    nw : numpy array (K x V)
+        weighted (by term count) topic assigments for each term
+    nwsum : numpy array (K x 1)
+        total term counts assigned to topic K
+    z_trace : numpy array (0:niters)
+        contains the diff for z at each iteration
+    NZ : scalar
+        number of non-zero elements in counts
+    D : scalar
+        number of documents
+    V : scalar
+        number of terms
+    K : scalar
+        number of topics
+    betasum : numpy array
+        sum of beta prior over V
+    alphasum : numpy array
+        sum of alpha prior over K
+    beta : numpy array
+        prior for phi
+    alpha : numpy array
+        prior for theta
+    """
+
+    cdef int dv, d, v, count_dv, topic, k
+    cdef double[:] p = np.zeros(K)
+
+    for dv in range(NZ):
+
+        d = count[dv,0]
+        v = count[dv,1]
+        count_dv = count[dv,2]
+
+        topic = z[dv]
+
+        nd[d,topic] -= count_dv
+        ndsum[d] -= count_dv
+
+        topic = z_sample(nd[d,:], ndsum[d], nw[:,v], nwsum, K,
+                         alphasum[d], betasum, alpha[d,:],
+                         beta[:,v], p)
+
+        nd[d,topic] += count_dv
+        ndsum[d] += count_dv
+
+        z[dv] = topic
+
+
+def LDA_pass_b_fphi(int[:,:] count, int[:] z, int[:,:] nd, int[:] ndsum,
+                    int[:,:] nw, int[:] nwsum, int NZ, int D, int V, int K,
+                    double alpha, double beta, **kwds):
+    """runs one pass of LDA over the provided text count
+
+    Uses pre-specified phi instead of estimating
+
+    Uses a constant value for all priors
+
+    Parameters
+    ----------
+    count : numpy array (NZ x 3)
+        triplet representation for term counts for current node
+    z : numpy array (N x 1)
+        topic assignments for each term
+    nd : numpy array (D x K)
+        weighted (by term count) topic assigments for each document
+    ndsum : numpy array (D x 1)
+        term counts in document d
+    nw : numpy array (K x V)
+        weighted (by term count) topic assigments for each term
+    nwsum : numpy array (K x 1)
+        total term counts assigned to topic K
+    z_trace : numpy array (0:niters)
+        contains the diff for z at each iteration
+    NZ : scalar
+        number of non-zero elements in counts
+    D : scalar
+        number of documents
+    V : scalar
+        number of terms
+    K : scalar
+        number of topics
+    alpha : scalar
+        prior for theta
+    beta : scalar
+        prior for phi
+    """
+
+    cdef int dv, d, v, count_dv, topic, k
+
+    cdef double Kalpha = K * alpha
+    cdef double Vbeta = V * beta
+
+    cdef double[:] p = np.zeros(K)
+
+    cdef ind = 0
+
+    for dv in range(NZ):
+
+        d = count[dv,0]
+        v = count[dv,1]
+        count_dv = count[dv,2]
+
+        for n in range(count_dv):
+
+            topic = z[ind]
+
+            nd[d,topic] -= 1
+            ndsum[d] -= 1
+
+            topic = z_sample_b(nd[d,:], ndsum[d], nw[:,v], nwsum, K,
+                               Kalpha, Vbeta, alpha, beta, p)
+
+            nd[d,topic] += 1
+            ndsum[d] += 1
+
+            z[ind] = topic
+
+            ind += 1
+
+
+def eLDA_pass_b_fphi(int[:,:] count, int[:] z, int[:,:] nd, int[:] ndsum,
+                     int[:,:] nw, int[:] nwsum, int NZ, int D, int V, int K,
+                     double alpha, double beta, **kwds):
+    """runs one pass of LDA over the provided text count
+
+    Uses efficient estimation procedure
+
+    Uses pre-specified phi instead of estimating
+
+    Uses a constant value for all priors
+
+    Parameters
+    ----------
+    count : numpy array (NZ x 3)
+        triplet representation for term counts for current node
+    z : numpy array (NZ x 1)
+        topic assignments for each term
+    nd : numpy array (D x K)
+        weighted (by term count) topic assigments for each document
+    ndsum : numpy array (D x 1)
+        term counts in document d
+    nw : numpy array (K x V)
+        weighted (by term count) topic assigments for each term
+    nwsum : numpy array (K x 1)
+        total term counts assigned to topic K
+    z_trace : numpy array (0:niters)
+        contains the diff for z at each iteration
+    NZ : scalar
+        number of non-zero elements in counts
+    D : scalar
+        number of documents
+    V : scalar
+        number of terms
+    K : scalar
+        number of topics
+    alpha : scalar
+        prior for theta
+    beta : scalar
+        prior for phi
+    """
+
+    cdef int dv, d, v, count_dv, topic, k
+
+    cdef double Kalpha = K * alpha
+    cdef double Vbeta = V * beta
+
+    cdef double[:] p = np.zeros(K)
+
+    for dv in range(NZ):
+
+        d = count[dv,0]
+        v = count[dv,1]
+        count_dv = count[dv,2]
+
+        topic = z[dv]
+
+        nd[d,topic] -= count_dv
+        ndsum[d] -= count_dv
+
+        topic = z_sample_b(nd[d,:], ndsum[d], nw[:,v], nwsum, K,
+                           Kalpha, Vbeta, alpha, beta, p)
+
+        nd[d,topic] += count_dv
+        ndsum[d] += count_dv
+
+        z[dv] = topic

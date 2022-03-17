@@ -264,7 +264,7 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
 
 def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
          LDA_method="efficient_b", nw_f=None, n_jobs=12,
-         write_int=False, **kwds):
+         write_int=0, miter=1, **kwds):
     """fits a distributed instance of latent dirichlet allocation (LDA)
 
     Uses joblib instead of more complicated methods
@@ -293,6 +293,8 @@ def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
 
     nw_f : str or None
         possible location of pre-specified phi
+    miter : scalar
+        number of iterations at which to merge nw
     kwds : dict
         additional key-words to provide for backend coordinator
     """
@@ -332,7 +334,7 @@ def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
                         for mod in tqdm(mod_l, leave=False))
 
         # only update nw if prespecified nw not provided
-        if nw_f is None:
+        if nw_f is None and ((s == (niters - 1)) or (s % miter == 0)):
             # update global nw/nwsum
             nw_l = [extract_nw(mod) for mod in mod_l]
             nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
@@ -342,7 +344,7 @@ def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         with open("log.txt", "a") as fd:
             fd.write(msg + "\n")
 
-        if write_int:
+        if (write_int > 0) and (s % write_int == 0):
             # write node output
             Parallel(n_jobs=n_jobs, max_nbytes=None)(
                     delayed(write_mod_csv)(mod, out_dir)
@@ -593,10 +595,10 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
 def load_nw(mod, nw_f):
     """load phi matrix and add to mod"""
 
-#    nw = np.loadtxt(nw_f, delimiter=",")
-#    mod["nw"] = np.array(nw, dtype=np.intc)
-#    nwsum = nw.sum(axis=1)
-#    mod["nwsum"] = np.array(nwsum, dtype=np.intc)
+    nw = np.loadtxt(nw_f, delimiter=",")
+    mod["nw"] = np.array(nw, dtype=np.intc)
+    nwsum = nw.sum(axis=1)
+    mod["nwsum"] = np.array(nwsum, dtype=np.intc)
     return mod
 
 

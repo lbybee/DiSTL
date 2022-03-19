@@ -6,8 +6,11 @@ from datetime import datetime
 from tqdm import tqdm
 import pandas as pd
 import numpy as np
+import tracemalloc
+import psutil
 import glob
 import sys
+import gc
 import os
 
 # TODO currently only base LDA supports aggregate values
@@ -299,6 +302,8 @@ def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         additional key-words to provide for backend coordinator
     """
 
+    tracemalloc.start()
+
     # load DTM metadata/info
     D, V, count_fl = prep_DTM_info(DTM_dir)
 
@@ -323,6 +328,9 @@ def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     # fit iterations
     for s in tqdm(range(niters)):
 
+        ram0 = psutil.virtual_memory().percent
+        snapshot1 = tracemalloc.take_snapshot()
+
         # estimate model state for current iteration
         if nw_f is None:
             mod_l = Parallel(n_jobs=n_jobs, max_nbytes=None)(
@@ -333,18 +341,24 @@ def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
                         delayed(est_LDA_pass_fphi)(mod, LDA_method=LDA_method)
                         for mod in tqdm(mod_l, leave=False))
 
+        ram1 = psutil.virtual_memory().percent
+
         # only update nw if prespecified nw not provided
-        if nw_f is None and ((s == (niters - 1)) or (s % miter == 0)):
+        if nw_f is None and ((s == (niters - 1)) or
+                             ((s % miter == 0) and (s != 0))):
             # update global nw/nwsum
             nw_l = [extract_nw(mod) for mod in mod_l]
             nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
             mod_l = [readd_nw(mod, nw, nwsum) for mod in mod_l]
 
+        ram2 = psutil.virtual_memory().percent
         msg = est_LDA_logger(mod_l[0])
+        msg += " ram0: %2.f ram1: %2.f ram2: %2.f" % (ram0, ram1, ram2)
         with open("log.txt", "a") as fd:
             fd.write(msg + "\n")
 
-        if (write_int > 0) and (s % write_int == 0):
+        if ((s == (niters - 1)) or
+            (write_int > 0) and (s % write_int == 0) and (s != 0)):
             # write node output
             Parallel(n_jobs=n_jobs, max_nbytes=None)(
                     delayed(write_mod_csv)(mod, out_dir)
@@ -353,18 +367,13 @@ def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
             # add phi and write global output
             write_global_csv(nw, out_dir, "nw")
 
-    # write node output
-    Parallel(n_jobs=n_jobs, max_nbytes=None)(
-            delayed(write_mod_csv)(mod, out_dir)
-            for mod in mod_l)
-
-    # update global nw/nwsum
-    nw_l = [extract_nw(mod) for mod in mod_l]
-    nw, nwsum = aggregate_nw(nw_l, nw, nwsum)
-
-    # add phi and write global output
-    write_global_csv(nw, out_dir, "nw")
-
+        # clear memory
+        gc.collect(generation=2)
+        snapshot2 = tracemalloc.take_snapshot()
+        top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+        with open("memory_%s.txt" % s, "w") as fd:
+            for stat in top_stats:
+                fd.write(str(stat) + "\n")
 
 
 ##############################################################################

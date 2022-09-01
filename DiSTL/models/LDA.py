@@ -21,7 +21,7 @@ import os
 
 def LDA(DTM_dir, out_dir, K, part_l=None, niters=500, alpha=1., beta=1.,
         LDA_method="efficient_b", fin_agg_iter=0, log_file="log.txt",
-        nw_f=None, **kwds):
+        nw_f=None, write_int=0, **kwds):
     """fits a sequential instance of latent dirichlet allocation (LDA)
 
     Parameters
@@ -77,7 +77,7 @@ def LDA(DTM_dir, out_dir, K, part_l=None, niters=500, alpha=1., beta=1.,
         mod = load_nw(mod, nw_f)
 
     # fit iterations
-    for s in range(niters):
+    for s in tqdm(range(niters)):
 
         # calc finagg
         if fin_agg_iter > 0:
@@ -94,13 +94,18 @@ def LDA(DTM_dir, out_dir, K, part_l=None, niters=500, alpha=1., beta=1.,
         with open(log_file, "a") as fd:
             fd.write(msg + "\n")
 
-    # add theta estimates to mod state and write node output
-    write_mod_csv(mod, out_dir)
+        if ((s == (niters - 1)) or
+            (write_int > 0) and (s % write_int == 0) and (s != 0)):
+            # write node output
+            write_mod_csv(mod, out_dir)
 
-    # add phi and write global output
-    write_global_csv(mod["nw"], out_dir, "nw")
-    if "nwfinagg" in mod:
-        write_global_csv(mod["nwfinagg"], out_dir, "nwfinagg")
+            # add phi and write global output
+            write_global_csv(mod["nw"], out_dir, "nw")
+            if "nwfinagg" in mod:
+                write_global_csv(mod["nwfinagg"], out_dir, "nwfinagg")
+
+        # clear memory
+        gc.collect(generation=2)
 
 
 def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
@@ -130,6 +135,9 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         efficient : take gibbs sample for every unique term
     omega : scalar
         weight value for using previous phi fits as prior
+
+        NOTE: weights are exponentially decaying.
+        Setting omega to one equally weights all past samples
 
     kwds : dict
         additional key-words to provide for backend coordinator
@@ -371,9 +379,9 @@ def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         gc.collect(generation=2)
         snapshot2 = tracemalloc.take_snapshot()
         top_stats = snapshot2.compare_to(snapshot1, 'lineno')
-        with open("memory_%s.txt" % s, "w") as fd:
-            for stat in top_stats:
-                fd.write(str(stat) + "\n")
+#        with open("memory_%s.txt" % s, "w") as fd:
+#            for stat in top_stats:
+#                fd.write(str(stat) + "\n")
 
 
 ##############################################################################
@@ -525,7 +533,8 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
                 weight = omega ** (bstp + 1)
                 nw_b = nw_l[m_i-bstp-1]
                 N_b = nw_b.sum()
-                beta_m += (nw_b * weight / N_b) * N_m
+                beta_m += nw_b * weight
+#                beta_m += (nw_b * weight / N_b) * N_m
             mod["beta"] = beta_m
             mod["betasum"] = mod["beta"].sum(axis=1)
         else:

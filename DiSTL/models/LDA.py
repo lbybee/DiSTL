@@ -2,6 +2,7 @@ from LDA_c_methods import LDA_pass_fphi, eLDA_pass_fphi, eLDA_pass_b_fphi
 from LDA_c_methods import LDA_pass, eLDA_pass, eLDA_pass_b
 from joblib import Parallel, delayed
 from coordinator import Coordinator
+from natsort import natsorted
 from datetime import datetime
 from tqdm import tqdm
 import pandas as pd
@@ -21,7 +22,7 @@ import os
 
 def LDA(DTM_dir, out_dir, K, part_l=None, niters=500, alpha=1., beta=1.,
         LDA_method="efficient_b", fin_agg_iter=0, log_file="log.txt",
-        nw_f=None, write_int=0, **kwds):
+        nw_f=None, write_int=0, ftype="csv", omega=1, **kwds):
     """fits a sequential instance of latent dirichlet allocation (LDA)
 
     Parameters
@@ -63,11 +64,12 @@ def LDA(DTM_dir, out_dir, K, part_l=None, niters=500, alpha=1., beta=1.,
         log_file = os.path.basename(out_dir) + ".txt"
 
     # load DTM metadata/info
-    D, V, count_fl = prep_DTM_info(DTM_dir, part_l)
+    D, V, count_fl = prep_DTM_info(DTM_dir, part_l, ftype)
 
     # init model
     mod_l = [init_model(f, K=K, V=V, alpha=alpha, beta=beta,
-                        LDA_method=LDA_method, fin_agg_iter=fin_agg_iter)
+                        LDA_method=LDA_method, fin_agg_iter=fin_agg_iter,
+                        ftype=ftype, omega=omega)
              for f in count_fl]
     if len(mod_l) > 1:
         mod = aggregate_mod(mod_l)
@@ -109,7 +111,7 @@ def LDA(DTM_dir, out_dir, K, part_l=None, niters=500, alpha=1., beta=1.,
 
 
 def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
-          LDA_method="efficient_b", omega=1., **kwds):
+          LDA_method="efficient_b", omega=1, ftype="csv", **kwds):
     """fits a online instance of latent dirichlet allocation (LDA)
 
     Parameters
@@ -148,18 +150,18 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     """
 
     # load DTM metadata/info
-    D, V, count_fl = prep_DTM_info(DTM_dir)
+    D, V, count_fl = prep_DTM_info(DTM_dir, ftype=ftype)
 
     # prep list to hold prior term counts
     nw_l = []
 
     # iteratively fit models
-    for f in count_fl:
+    for f in tqdm(count_fl):
 
         # load model
         mod = init_model(f, K=K, V=V, alpha=alpha, beta=beta,
                          LDA_method=LDA_method, nw_l=nw_l,
-                         omega=omega)
+                         omega=omega, ftype=ftype)
 
         # fit online part
         for s in range(niters):
@@ -177,12 +179,16 @@ def oLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
         write_online_global_csv(mod["label"], mod["nw"], out_dir)
 
         # add to nw l
-        nw_l.append(mod["nw"])
-
+        unw = mod["nw"]
+        m_i = len(nw_l)
+        for bstp in range(m_i):
+            weight = omega ** (bstp + 1)
+            unw -= nw_l[m_i - bstp - 1] * weight
+        nw_l.append(unw)
 
 
 def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
-         LDA_method="efficient_b", nw_f=None, **kwds):
+         LDA_method="efficient_b", nw_f=None, ftype="csv", **kwds):
     """fits a distributed instance of latent dirichlet allocation (LDA)
 
     Parameters
@@ -217,11 +223,12 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     coord = Coordinator(**kwds)
 
     # load DTM metadata/info
-    D, V, count_fl = prep_DTM_info(DTM_dir)
+    D, V, count_fl = prep_DTM_info(DTM_dir, ftype=ftype)
 
     # init model
     mod_l = coord.map(init_model, count_fl, K=K, V=V,
-                      alpha=alpha, beta=beta, LDA_method=LDA_method)
+                      alpha=alpha, beta=beta, LDA_method=LDA_method,
+                      ftype=ftype)
     if nw_f is not None:
         mod_l = coord.map(load_nw, mod_l, nw_f=nw_f)
     else:
@@ -275,7 +282,7 @@ def dLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
 
 def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
          LDA_method="efficient_b", nw_f=None, n_jobs=12,
-         write_int=0, miter=1, **kwds):
+         write_int=0, miter=1, ftype="csv", **kwds):
     """fits a distributed instance of latent dirichlet allocation (LDA)
 
     Uses joblib instead of more complicated methods
@@ -313,12 +320,13 @@ def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
     tracemalloc.start()
 
     # load DTM metadata/info
-    D, V, count_fl = prep_DTM_info(DTM_dir)
+    D, V, count_fl = prep_DTM_info(DTM_dir, ftype=ftype)
 
     # init model
     mod_l = Parallel(n_jobs=n_jobs, max_nbytes=None)(
                 delayed(init_model)(cf, K=K, V=V, alpha=alpha,
-                                    beta=beta, LDA_method=LDA_method)
+                                    beta=beta, LDA_method=LDA_method,
+                                    ftype=ftype)
                 for cf in tqdm(count_fl))
     if nw_f is not None:
         # load existing nw/nwsum
@@ -388,7 +396,7 @@ def dlLDA(DTM_dir, out_dir, K, niters=500, alpha=1., beta=1.,
 #                           State/IO/gen functions                           #
 ##############################################################################
 
-def prep_DTM_info(DTM_dir, part_l=None):
+def prep_DTM_info(DTM_dir, part_l=None, ftype="csv"):
     """extracts the DTM dimensions (D, V) as well as a list of count files
 
     Parameters
@@ -397,6 +405,7 @@ def prep_DTM_info(DTM_dir, part_l=None):
         location of DTM files
     part_l : list or None
         if provided, used as input to constrain list of files
+    ftype : str
 
     Returns
     -------
@@ -411,29 +420,54 @@ def prep_DTM_info(DTM_dir, part_l=None):
     # get dimensions
     # TODO handle doc/term more cleanly
     if part_l is None:
-        D_l = [len(open(os.path.join(DTM_dir, d), "r").readlines())
-               for d in os.listdir(DTM_dir) if d[:3] == "doc"]
+        if ftype == "csv":
+            D_l = [len(open(os.path.join(DTM_dir, d), "r").readlines())
+                   for d in tqdm(os.listdir(DTM_dir)) if d[:3] == "doc"]
+            D = sum(D_l) - len(D_l)
+        elif ftype == "pq":
+            D_l = [pd.read_parquet(os.path.join(DTM_dir, d))
+                   for d in tqdm(os.listdir(DTM_dir)) if d[:3] == "doc"]
+            D_l = [d.shape[0] for d in D_l]
+            D = sum(D_l)
     else:
-        D_l = [len(open(os.path.join(DTM_dir, "doc_%s.csv" % d),
-                        "r").readlines())
-               for d in part_l]
-    D = sum(D_l) - len(D_l)
-    V_l = [len(open(os.path.join(DTM_dir, v), "r").readlines())
-           for v in os.listdir(DTM_dir) if v[:4] == "term"]
-    V = sum(V_l) - len(V_l)
+        if ftype == "csv":
+            D_l = [len(open(os.path.join(DTM_dir, "doc_%s.csv" % d),
+                            "r").readlines())
+               for d in tqdm(part_l)]
+            D = sum(D_l) - len(D_l)
+        elif ftype == "pq":
+            D_l = [pd.read_parquet(os.path.join(DTM_dir, "doc_%s.pq" % d))
+                   for d in tqdm(part_l)]
+            D_l = [d.shape[0] for d in D_l]
+        D = sum(D_l)
+    if ftype == "csv":
+        V_l = [len(open(os.path.join(DTM_dir, v), "r").readlines())
+               for v in tqdm(os.listdir(DTM_dir)) if v[:4] == "term"]
+        V = sum(V_l) - len(V_l)
+    elif ftype == "pq":
+        V_l = [pd.read_parquet(os.path.join(DTM_dir, v)).shape[0]
+               for v in tqdm(os.listdir(DTM_dir)) if v[:4] == "term"]
+        V = sum(V_l)
 
     # count files
     if part_l is None:
-        count_fl = sorted(glob.glob(os.path.join(DTM_dir, "count*.csv")))
+        if ftype == "csv":
+            count_fl = natsorted(glob.glob(os.path.join(DTM_dir, "count*.csv")))
+        elif ftype == "pq":
+            count_fl = natsorted(glob.glob(os.path.join(DTM_dir, "count*.pq")))
     else:
-        count_fl = sorted([os.path.join(DTM_dir, "count_%s.csv" % d)
-                           for d in part_l])
+        if ftype == "csv":
+            count_fl = natsorted([os.path.join(DTM_dir, "count_%s.csv" % d)
+                                  for d in part_l])
+        elif ftype == "pq":
+            count_fl = natsorted([os.path.join(DTM_dir, "count_%s.pq" % d)
+                                  for d in part_l])
 
     return D, V, count_fl
 
 
 def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
-               nw_l=None, omega=None, fin_agg_iter=0):
+               nw_l=None, omega=1., fin_agg_iter=0, ftype="csv"):
     """loads a count chunk onto a specified client node
 
     Parameters
@@ -456,6 +490,8 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
         if provided this corresponds to weight for prior data
     fin_agg_iter : scalar
         number of iterations from end of path to aggregate (sum) up
+    ftype : str
+        type of file for data
 
     Returns
     -------
@@ -507,10 +543,15 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
     mod["V"] = V
     # extract label
     label = os.path.basename(DTM_shard_fname)
-    mod["label"] = label.replace(".csv", "").replace("count_", "")
+    mod["label"] = label.replace(".%s" % ftype, "").replace("count_", "")
 
     # prep count
-    count = pd.read_csv(DTM_shard_fname).values
+    if ftype == "csv":
+        count = pd.read_csv(DTM_shard_fname).values
+    elif ftype == "pq":
+        count = pd.read_parquet(DTM_shard_fname).values
+    else:
+        raise ValueError("Unknown ftype: %s" %ftype)
     doc_id = count[:,0]
     doc_id -= doc_id.min()
     count[:,0] = doc_id
@@ -525,22 +566,8 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
 
     # handle nw based prior
     if LDA_method != "efficient_b":
-        if nw_l is not None:
-            N_m = mod["count"][:,2].sum()
-            m_i = len(nw_l)
-            beta_m = np.ones((K, V)) * beta
-            for bstp in range(m_i):
-                weight = omega ** (bstp + 1)
-                nw_b = nw_l[m_i-bstp-1]
-                N_b = nw_b.sum()
-                beta_m += nw_b * weight
-#                beta_m += (nw_b * weight / N_b) * N_m
-            mod["beta"] = beta_m
-            mod["betasum"] = mod["beta"].sum(axis=1)
-        else:
-            mod["beta"] = np.ones((K, V)) * beta
-            mod["betasum"] = mod["beta"].sum(axis=1)
-
+        mod["beta"] = np.ones((K, V)) * beta
+        mod["betasum"] = mod["beta"].sum(axis=1)
         # set theta prior
         mod["alpha"] = np.ones((D, K)) * alpha
         mod["alphasum"] = mod["alpha"].sum(axis=1)
@@ -549,23 +576,40 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
         mod["beta"] = beta
         mod["alpha"] = alpha
 
-    # init z
-    # TODO currently full estimation doesn't support zprior
-    # p(z_i=k|w_i) = p(w_i|z_i=k)p(z_i=k)/p(w_i)
-    if LDA_method == "full":
-        N = np.sum(count[:,2])
-        z = np.random.randint(0, high=K, size=N, dtype=np.intc)
-    elif LDA_method == "efficient":
-        zprior = (mod["beta"] / mod["beta"].sum(axis=0)).T
-        zprob = zprior[count[:,1]]
-        u = np.random.rand(NZ, 1)
-        z = (u < zprob.cumsum(axis=1)).argmax(axis=1)
-        z = np.array(z, dtype=np.intc)
-    elif LDA_method == "efficient_b":
-        NZ = count.shape[0]
-        z = np.random.randint(0, high=K, size=NZ, dtype=np.intc)
+    # initialize prior for sampling initial z
+    if nw_l is None:
+        zprior = np.ones((K, V)) * beta
     else:
-        raise ValueError("Unknown LDA_method: %s" % LDA_method)
+        if isinstance(nw_l, list):
+            if len(nw_l) == 0:
+                zprior = np.ones((K, V)) * beta
+            else:
+                zprior = np.sum(nw_l, axis=0) + np.ones((K, V)) * beta
+        else:
+            raise ValueError("nw_l must be a list or None")
+
+    # init z
+    zp = (zprior / zprior.sum(axis=0)).T
+    zprob = zp[count[:,1]]
+    u = np.random.rand(NZ, 1)
+    z = (u < zprob.cumsum(axis=1)).argmax(axis=1)
+    z = np.array(z, dtype=np.intc)
+#    # TODO currently full estimation doesn't support zprior
+#    # p(z_i=k|w_i) = p(w_i|z_i=k)p(z_i=k)/p(w_i)
+#    if LDA_method == "full":
+#        N = np.sum(count[:,2])
+#        z = np.random.randint(0, high=K, size=N, dtype=np.intc)
+#    elif LDA_method == "efficient":
+#        zp = (zprior / zprior.sum(axis=0)).T
+#        zprob = zp[count[:,1]]
+#        u = np.random.rand(NZ, 1)
+#        z = (u < zprob.cumsum(axis=1)).argmax(axis=1)
+#        z = np.array(z, dtype=np.intc)
+#    elif LDA_method == "efficient_b":
+#        NZ = count.shape[0]
+#        z = np.random.randint(0, high=K, size=NZ, dtype=np.intc)
+#    else:
+#        raise ValueError("Unknown LDA_method: %s" % LDA_method)
     mod["z"] = z
 
     # prep z_trace (will get built up during iterations)
@@ -598,6 +642,12 @@ def init_model(DTM_shard_fname, K, V, alpha, beta, LDA_method,
         vzarr = vzdf.groupby(["z", "v"], as_index=False).sum().values
     nw = np.zeros(shape=(K, V))
     nw[vzarr[:,0], vzarr[:,1]] = vzarr[:,2]
+
+    if nw_l is not None:
+        m_i = len(nw_l)
+        for bstp in range(m_i):
+            weight = omega ** (bstp + 1)
+            nw += nw_l[m_i - bstp - 1] * weight
     nwsum = nw.sum(axis=1)
     mod["nw"] = np.array(nw, dtype=np.intc)
     mod["nwsum"] = np.array(nwsum, dtype=np.intc)
